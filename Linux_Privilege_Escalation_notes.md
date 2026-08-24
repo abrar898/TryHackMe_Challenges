@@ -2945,3 +2945,5 @@ uid=0(root) gid=0(root) groups=0(root),4(adm),24(cdrom),27(sudo),1000(cry0l1t3)
 
 # rm /tmp/sh
 ```
+
+
