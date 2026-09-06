@@ -1312,4 +1312,597 @@ print(json.dumps(response.json(), indent=4))
 
 *Notes compiled from: Applications of AI in InfoSec – Network Anomaly Detection, Sections 15–18.*
 
+# Malware Image Classification – Complete Notes (Simple English)
+
+---
+
+## Malware Classification
+
+Malware is software deliberately created to damage systems, steal data, or perform unauthorized actions. Every distinct "type" of malware is called a **malware family** – groups of programs that share the same code base, behaviour, or author. Famous families include Emotet (a banking trojan that also acts as a delivery vehicle for other malware) and WannaCry (a ransomware worm that encrypted files and demanded Bitcoin payments). Classifying a new malware sample into the correct family traditionally requires a human analyst to reverse-engineer the binary – disassembling machine code, tracing system calls, and comparing behaviour. This is extremely time-consuming. An ML classifier can look at thousands of samples and learn to distinguish families automatically, drastically speeding up the triage process. In this module we use a CNN trained on visual representations of malware binaries, which has the additional safety advantage that we never need to execute or directly handle the dangerous binary files themselves.
+
+---
+
+## Why Classify Malware Using Images?
+
+A Windows executable (PE file) is a binary file – a long sequence of bytes. Each byte can hold a value from 0 to 255. The key insight is: **if you arrange those bytes row by row and treat each byte value as a pixel brightness, you get a grayscale image**. A byte value of 0 becomes a black pixel, 255 becomes white, and everything in between becomes a shade of grey.
+
+This is not just a clever trick. Malware families that share the same code base will produce images with similar visual patterns. The packer sections, the import table, the code section, the resource section – each appears at roughly the same position in the image for samples from the same family, creating recognizable textures and block structures. A human can sometimes visually tell two families apart just by looking at the images. A CNN can learn these visual signatures far more reliably across thousands of samples.
+
+**Advantages of the image approach:**
+- No need to execute or handle live malware – just PNG files.
+- CNNs are extremely well-optimized for image classification.
+- Visual patterns are robust to minor code modifications that would fool signature-based scanners.
+- The image can reconstruct the original binary exactly – no information is lost in the conversion.
+
+---
+
+## The Malimg Dataset
+
+The **Malimg dataset** was proposed in a research paper and consists of **9,339 grayscale PNG images** representing **25 different malware families**. The dataset is organized in folders – one folder per family, named after the family. Examples of the 25 families included:
+
+```
+Adialer.C    Agent.FYI    Allaple.A    Allaple.L    Alueron.gen!J
+Autorun.K    C2LOP.gen!g  C2LOP.P      Dialplatform.B  Dontovo.A
+Fakerean     Instantaccess  Lolyda.AA1  Lolyda.AA2  Lolyda.AA3
+Lolyda.AT    Malex.gen!J  Obfuscator.AD  Rbot!gen   Skintrim.N
+Swizzor.gen!E  Swizzor.gen!I  VB.AT    Wintrim.BX  Yuner.A
+```
+
+**Class imbalance** is present – Allaple.A and Allaple.L have far more samples than families like Skintrim.N. This matters because a model trained on imbalanced data will be biased toward the majority class. Visualizing the class distribution with a bar plot before training is therefore an important first step, so you know which families might need more data or special handling.
+
+**Download commands:**
+```bash
+wget https://www.kaggle.com/api/v1/datasets/download/ikrambenabd/malimg-original -O malimg.zip
+unzip malimg.zip
+```
+
+---
+
+## Exploring the Dataset – Class Distribution
+
+Before training, always visualize the class distribution to spot imbalances:
+
+```python
+import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+DATA_BASE_PATH = "./malimg_paper_dataset_imgs/"
+
+# Count images per malware family
+dist = {}
+for mlw_class in os.listdir(DATA_BASE_PATH):
+    mlw_dir = os.path.join(DATA_BASE_PATH, mlw_class)
+    dist[mlw_class] = len(os.listdir(mlw_dir))
+
+# HTB Color Palette
+htb_green  = "#9FEF00"
+node_black = "#141D2B"
+hacker_grey = "#A4B1CD"
+
+classes     = list(dist.keys())
+frequencies = list(dist.values())
+
+plt.figure(facecolor=node_black)
+sns.barplot(y=classes, x=frequencies, edgecolor="black", orient='h', color=htb_green)
+plt.title("Malware Class Distribution", color=htb_green)
+plt.xlabel("Malware Class Frequency", color=htb_green)
+plt.ylabel("Malware Class", color=htb_green)
+plt.xticks(color=hacker_grey)
+plt.yticks(color=hacker_grey)
+ax = plt.gca()
+ax.set_facecolor(node_black)
+plt.show()
+```
+
+`os.listdir(DATA_BASE_PATH)` returns all folder names inside the base directory – each folder is one malware family. `len(os.listdir(mlw_dir))` counts the PNG files inside that family's folder. The resulting bar chart lets you immediately see which families are over-represented (Allaple.A, Allaple.L) and which are rare. If you find the trained model has poor recall on a specific family, the class distribution plot is the first place to investigate.
+
+---
+
+## Preprocessing the Malware Dataset
+
+### Splitting into Train and Test Sets
+
+Before feeding images to the CNN, we split the dataset. We use the `split-folders` library:
+
+```bash
+pip3 install split-folders
+```
+
+```python
+import splitfolders
+
+DATA_BASE_PATH   = "./malimg_paper_dataset_imgs/"
+TARGET_BASE_PATH = "./newdata/"
+
+TRAINING_RATIO = 0.8
+TEST_RATIO     = 1 - TRAINING_RATIO    # = 0.2
+
+splitfolders.ratio(
+    input=DATA_BASE_PATH,
+    output=TARGET_BASE_PATH,
+    ratio=(TRAINING_RATIO, 0, TEST_RATIO)
+)
+```
+
+`splitfolders.ratio()` takes the source folder, the destination folder, and a tuple `(train, val, test)`. The `0` in the middle means we create no validation folder (we skip the validation set for this experiment). After running this once, the `./newdata/` directory contains:
+
+```
+./newdata/train/   ← 7,459 images (80%)
+./newdata/test/    ← 1,880 images (20%)
+./newdata/val/     ← 0 images    (unused)
+```
+
+Each subfolder inside `train/` and `test/` is named after a malware family – the exact same structure as the original dataset, just with 80% of each family's images in `train/` and 20% in `test/`.
+
+**Why split-folders instead of doing it manually?** It handles the per-class splitting correctly. If you randomly shuffled all images and then split 80/20, some families might end up entirely in the test set. `splitfolders` ensures every class has proportional representation in both sets.
+
+### Defining Preprocessing Transforms
+
+CNNs require all input images to be the same fixed size, and they train more stably when pixel values are normalized. We define these transforms using PyTorch's `torchvision.transforms`:
+
+```python
+from torchvision import transforms
+
+transform = transforms.Compose([
+    transforms.Resize((75, 75)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+```
+
+`transforms.Compose([...])` chains multiple transforms into a single pipeline – each image goes through all transforms in order.
+
+**Step 1 – `transforms.Resize((75, 75))`:** Resizes every image to 75×75 pixels, regardless of its original size. Malware images vary in size depending on how large the binary was. The CNN requires a fixed input size. Some fine detail is lost during resizing (large images are compressed, small ones are stretched), but the overall pattern structure is preserved.
+
+**Step 2 – `transforms.ToTensor()`:** Converts the PIL image (or NumPy array) into a PyTorch tensor and rescales pixel values from the range [0, 255] to [0.0, 1.0]. It also changes the axis order from (Height, Width, Channels) to (Channels, Height, Width), which is what PyTorch expects.
+
+**Step 3 – `transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])`:** Subtracts the mean and divides by the standard deviation per channel. These specific values (0.485, 0.456, 0.406 for mean and 0.229, 0.224, 0.225 for std) are the ImageNet dataset statistics – the dataset ResNet50 was originally trained on. Using the same normalization the model was pre-trained with ensures our input distribution matches what the model expects.
+
+**Why normalize?** Without normalization, pixel values range from 0 to 1 after `ToTensor()`. With normalization they are centred around 0 with unit variance. This prevents large activation values in early layers, helps gradient flow, and makes training faster and more stable.
+
+**Why grayscale images get 3 channels:** Our malware images are greyscale (1 channel), but ResNet50 expects 3-channel RGB images. PyTorch's `ImageFolder` automatically converts greyscale images to 3-channel by repeating the single channel three times, so no extra code is needed.
+
+### Loading Datasets with ImageFolder
+
+```python
+from torchvision.datasets import ImageFolder
+import os
+
+BASE_PATH = "./newdata/"
+
+train_dataset = ImageFolder(
+    root=os.path.join(BASE_PATH, "train"),
+    transform=transform
+)
+
+test_dataset = ImageFolder(
+    root=os.path.join(BASE_PATH, "test"),
+    transform=transform
+)
+```
+
+`ImageFolder` is a PyTorch dataset class that automatically reads images organized in a folder-per-class structure. It scans the `root` directory, finds all subfolders (one per malware family), and creates a mapping from folder name to integer class label. The `transform` parameter applies our preprocessing pipeline to every image as it is loaded. `train_dataset.classes` gives the list of class names in alphabetical order. `train_dataset.class_to_idx` gives the name-to-integer mapping.
+
+### Creating DataLoaders
+
+```python
+from torch.utils.data import DataLoader
+
+TRAIN_BATCH_SIZE = 512
+TEST_BATCH_SIZE  = 1024
+
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=TRAIN_BATCH_SIZE,
+    shuffle=True,
+    num_workers=2
+)
+
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=TEST_BATCH_SIZE,
+    shuffle=False,
+    num_workers=2
+)
+```
+
+A `DataLoader` wraps a dataset and handles batching, shuffling, and parallel loading. It is what the training loop actually iterates over.
+
+`batch_size=512` for training: each training step processes 512 images at once. Larger batches use more GPU memory but give more stable gradient estimates. `batch_size=1024` for testing: no gradient computation needed, so we can use a larger batch for faster evaluation.
+
+`shuffle=True` for training: randomly reorders the images before each epoch. This prevents the model from learning the order of the data rather than the content. Important because `ImageFolder` loads images alphabetically by class, so without shuffling the model would see all Adialer.C images first, then all Agent.FYI images, etc.
+
+`shuffle=False` for testing: order does not matter for evaluation, and keeping it consistent makes debugging easier.
+
+`num_workers=2`: uses 2 CPU processes to load and preprocess images in the background while the GPU trains. This overlaps data loading with computation, preventing the GPU from sitting idle waiting for the next batch.
+
+### Complete `load_datasets` Function
+
+```python
+from torchvision import transforms
+from torch.utils.data import DataLoader
+from torchvision.datasets import ImageFolder
+import os
+
+def load_datasets(base_path, train_batch_size, test_batch_size):
+    transform = transforms.Compose([
+        transforms.Resize((75, 75)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    train_dataset = ImageFolder(root=os.path.join(base_path, "train"), transform=transform)
+    test_dataset  = ImageFolder(root=os.path.join(base_path, "test"),  transform=transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True,  num_workers=2)
+    test_loader  = DataLoader(test_dataset,  batch_size=test_batch_size,  shuffle=False, num_workers=2)
+
+    n_classes = len(train_dataset.classes)
+    return train_loader, test_loader, n_classes
+```
+
+The function also returns `n_classes` – the number of malware families found in the training folder. Reading this dynamically from the data means the code still works if you add or remove families from the dataset without changing any hardcoded numbers.
+
+---
+
+## The Model – ResNet50 with Transfer Learning
+
+### What is ResNet50?
+
+**ResNet50** (Residual Network, 50 layers deep) was introduced by Microsoft Research in 2015 and became a landmark in computer vision. It has approximately **23 million parameters** and uses a clever design called **residual connections** (skip connections) to solve the vanishing gradient problem that made very deep networks impossible to train before. The "50" refers to 50 weight layers (convolutional + fully connected).
+
+ResNet50 was originally trained on **ImageNet** – a dataset of 1.2 million images across 1000 categories (cats, dogs, cars, furniture, etc.). During that training it learned to detect edges, textures, shapes, and complex visual patterns. These learned features are useful far beyond ImageNet – which is why we reuse them.
+
+### Transfer Learning – Standing on the Shoulders of Giants
+
+Training ResNet50 from scratch on ImageNet took weeks on high-end hardware. **Transfer learning** lets us skip that. We download the already-trained weights and use them as our starting point. The model already knows how to detect visual features. We only need to teach it what malware images look like.
+
+**Analogy:** Imagine hiring a photographer who has spent years learning composition, lighting, and focus. Instead of teaching them photography from scratch, you just show them malware images and say "now apply your existing skills to distinguish these families." They adapt far faster than someone starting with zero photography knowledge.
+
+### Freezing Layers
+
+We **freeze** (lock) all the weights in ResNet50's convolutional layers. Only the final fully-connected layer we add will be trained. This means during backpropagation, gradients do not flow back through the frozen layers and those weights do not change.
+
+**Why freeze?** Training 23 million parameters requires enormous data and compute. By freezing the feature extractor and only training the classifier head, we dramatically reduce training time. The trade-off is slightly lower accuracy than full fine-tuning, but for a proof-of-concept this is an excellent trade-off.
+
+### The MalwareClassifier Class
+
+```python
+import torch.nn as nn
+import torchvision.models as models
+
+HIDDEN_LAYER_SIZE = 1000
+
+class MalwareClassifier(nn.Module):
+    def __init__(self, n_classes):
+        super(MalwareClassifier, self).__init__()
+
+        # Load pre-trained ResNet50 with ImageNet weights
+        self.resnet = models.resnet50(weights='DEFAULT')
+
+        # Freeze all ResNet parameters – no updates during training
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+
+        # Replace the final fully-connected layer with our custom classifier head
+        num_features = self.resnet.fc.in_features    # 2048 for ResNet50
+        self.resnet.fc = nn.Sequential(
+            nn.Linear(num_features, HIDDEN_LAYER_SIZE),   # 2048 → 1000
+            nn.ReLU(),                                     # non-linearity
+            nn.Linear(HIDDEN_LAYER_SIZE, n_classes)        # 1000 → 25
+        )
+
+    def forward(self, x):
+        return self.resnet(x)
+```
+
+**Line by line:**
+
+`models.resnet50(weights='DEFAULT')` downloads and loads the ResNet50 architecture with ImageNet pre-trained weights. `weights='DEFAULT'` means "use the best available pre-trained weights."
+
+`for param in self.resnet.parameters(): param.requires_grad = False` iterates over every weight tensor in ResNet50 and sets `requires_grad=False`. This tells PyTorch not to compute or store gradients for these parameters – they will not be updated during training.
+
+`self.resnet.fc.in_features` gets the size of the input to ResNet50's original final layer. For ResNet50 this is always 2048 – the output of the global average pooling layer.
+
+`nn.Sequential(...)` creates a new classifier head with three layers:
+- `nn.Linear(2048, 1000)` – a fully-connected layer reducing from 2048 to 1000 features. These weights ARE trainable.
+- `nn.ReLU()` – activation function introducing non-linearity.
+- `nn.Linear(1000, n_classes)` – output layer producing one score per malware family. For 25 families this is `nn.Linear(1000, 25)`.
+
+`def forward(self, x)` defines how data flows through the model. `x` is a batch of images. It goes through the entire ResNet50 (feature extraction, pooling) and then through our new classifier head, producing a vector of 25 raw scores (logits), one per class.
+
+**Initializing the model:**
+```python
+# Static: if you always have 25 classes
+model = MalwareClassifier(25)
+
+# Dynamic: read from the dataset (preferred)
+train_loader, test_loader, n_classes = load_datasets(DATA_PATH, TRAIN_BATCH_SIZE, TEST_BATCH_SIZE)
+model = MalwareClassifier(n_classes)
+```
+
+---
+
+## Training and Evaluation
+
+### The Training Function
+
+```python
+import torch
+import time
+
+def train(model, train_loader, n_epochs, verbose=False):
+    model.train()                                    # put model in training mode
+    criterion = torch.nn.CrossEntropyLoss()          # loss function
+    optimizer = torch.optim.Adam(model.parameters()) # optimizer
+
+    training_data = {"accuracy": [], "loss": []}
+
+    for epoch in range(n_epochs):
+        running_loss = 0
+        n_total   = 0
+        n_correct = 0
+        checkpoint = time.time() * 1000
+
+        for inputs, labels in train_loader:          # iterate batches
+            optimizer.zero_grad()                    # clear old gradients
+            outputs = model(inputs)                  # forward pass
+            loss = criterion(outputs, labels)        # compute loss
+            loss.backward()                          # backpropagation
+            optimizer.step()                         # update weights
+
+            _, predicted = outputs.max(1)            # pick highest-score class
+            n_total   += labels.size(0)
+            n_correct += predicted.eq(labels).sum().item()
+            running_loss += loss.item()
+
+        epoch_loss     = running_loss / len(train_loader)
+        epoch_duration = int(time.time() * 1000 - checkpoint)
+        epoch_accuracy = compute_accuracy(n_correct, n_total)
+
+        training_data["accuracy"].append(epoch_accuracy)
+        training_data["loss"].append(epoch_loss)
+
+        if verbose:
+            print(f"[i] Epoch {epoch+1} of {n_epochs}: Acc: {epoch_accuracy:.2f}% "
+                  f"Loss: {epoch_loss:.4f} (Took {epoch_duration} ms).")
+
+    return training_data
+```
+
+**Key concepts explained one by one:**
+
+`model.train()` switches the model into training mode. This matters for layers like BatchNorm and Dropout that behave differently during training vs. evaluation. ResNet50 uses BatchNorm, so this call is important.
+
+`torch.nn.CrossEntropyLoss()` is the standard loss function for multi-class classification. It combines a softmax (converts raw scores to probabilities) with negative log-likelihood loss. For the correct class, you want high probability; the loss penalizes low probability for the true class. Lower loss = model is more confident and correct.
+
+`torch.optim.Adam(model.parameters())` creates the Adam optimizer. Adam is an adaptive learning rate optimizer – it tracks a running average of gradients and their squares, automatically adjusting the effective learning rate per parameter. `model.parameters()` passes only the trainable parameters (the unfrozen classifier head) to the optimizer.
+
+`optimizer.zero_grad()` clears the accumulated gradients from the previous batch. PyTorch accumulates gradients by default (adding them each time `.backward()` is called). Failing to zero them would corrupt the gradient calculation for the current batch.
+
+`outputs = model(inputs)` runs the forward pass – sends the batch of images through ResNet50 and our classifier head, producing a tensor of shape `(batch_size, 25)` containing one raw score per class per image.
+
+`loss = criterion(outputs, labels)` computes how wrong the predictions are. `outputs` are the raw scores (logits), `labels` are the true class indices. CrossEntropyLoss converts logits to probabilities internally and computes the loss.
+
+`loss.backward()` runs backpropagation – computes the gradient of the loss with respect to every trainable parameter using the chain rule. This is the mathematical heart of learning: it tells us which direction to move each weight to reduce the loss.
+
+`optimizer.step()` updates all trainable weights by taking a small step in the direction that reduces the loss (negative gradient direction). The step size is controlled by the Adam optimizer's adaptive learning rate.
+
+`outputs.max(1)` finds the class with the highest score for each image. The `1` means "take the max along dimension 1 (the class dimension)." Returns two tensors: values (the max scores) and indices (which class). We only need the indices (`predicted`).
+
+### Loss Function – CrossEntropyLoss in Plain English
+
+Imagine the model produces scores `[2.1, 0.3, -1.2, ..., 4.5]` for 25 classes. The true class is class index 3 (Fakerean). CrossEntropyLoss:
+1. Converts all 25 scores to probabilities via softmax (all positive, sum to 1.0).
+2. Looks at the probability assigned to class 3.
+3. Computes `-log(probability_of_correct_class)`. If probability is 0.95 → loss = `-log(0.95) ≈ 0.05` (small loss, good prediction). If probability is 0.01 → loss = `-log(0.01) ≈ 4.6` (large loss, bad prediction).
+4. Averages this over the entire batch.
+
+Training minimizes this number across all batches and epochs.
+
+### Saving the Model
+
+```python
+def save_model(model, path):
+    model_scripted = torch.jit.script(model)
+    model_scripted.save(path)
+```
+
+`torch.jit.script(model)` compiles the model into TorchScript – a serialized format that can be loaded without the original Python class definition. This is more portable than `torch.save(model.state_dict(), path)` because it bundles both the architecture and the weights together. `model_scripted.save(path)` writes the compiled model to a `.pth` file on disk.
+
+**Why TorchScript instead of pickle/joblib?** For PyTorch models, `torch.jit.script` produces a self-contained file that can be loaded in any PyTorch environment (including C++ applications) without needing the `MalwareClassifier` class to be defined. It also enables optimization passes that can speed up inference.
+
+### The Predict Function
+
+```python
+def predict(model, test_data):
+    model.eval()
+
+    with torch.no_grad():
+        output = model(test_data)
+        _, predicted = torch.max(output.data, 1)
+
+    return predicted
+```
+
+`model.eval()` switches the model to evaluation mode. BatchNorm layers use running statistics instead of batch statistics. Dropout layers are disabled (all neurons active). This is essential for consistent, deterministic predictions.
+
+`torch.no_grad()` disables gradient computation entirely. During inference we do not need gradients (we are not updating weights), so disabling them saves memory and speeds up computation by about 2x.
+
+`torch.max(output.data, 1)` finds the class with the highest score for each image in the batch, returning the predicted class indices.
+
+### The Evaluation Function
+
+```python
+def compute_accuracy(n_correct, n_total):
+    return round(100 * n_correct / n_total, 2)
+
+
+def evaluate(model, test_loader):
+    model.eval()
+    n_correct = 0
+    n_total   = 0
+
+    with torch.no_grad():
+        for data, target in test_loader:
+            predicted = predict(model, data)
+            n_total   += target.size(0)
+            n_correct += (predicted == target).sum().item()
+
+    return compute_accuracy(n_correct, n_total)
+```
+
+This iterates over every batch in the test loader, makes predictions, and counts how many are correct. `(predicted == target).sum().item()` creates a boolean tensor (True where prediction matches label), sums the True values (counting correct predictions), and `.item()` converts the PyTorch tensor scalar to a Python integer. The final accuracy is `100 × (correct / total)`.
+
+### Plotting Training Progress
+
+```python
+import matplotlib.pyplot as plt
+
+def plot(data, title, label, xlabel, ylabel):
+    htb_green   = "#9FEF00"
+    node_black  = "#141D2B"
+    hacker_grey = "#A4B1CD"
+
+    plt.figure(figsize=(10, 6), facecolor=node_black)
+    plt.plot(range(1, len(data)+1), data, label=label, color=htb_green)
+    plt.title(title, color=htb_green)
+    plt.xlabel(xlabel, color=htb_green)
+    plt.ylabel(ylabel, color=htb_green)
+    plt.xticks(color=hacker_grey)
+    plt.yticks(color=hacker_grey)
+    ax = plt.gca()
+    ax.set_facecolor(node_black)
+    ax.spines['bottom'].set_color(hacker_grey)
+    ax.spines['top'].set_color(node_black)
+    ax.spines['right'].set_color(node_black)
+    ax.spines['left'].set_color(hacker_grey)
+    legend = plt.legend(facecolor=node_black, edgecolor=hacker_grey, fontsize=10)
+    plt.setp(legend.get_texts(), color=htb_green)
+    plt.show()
+
+def plot_training_accuracy(training_data):
+    plot(training_data['accuracy'], "Training Accuracy", "Accuracy", "Epoch", "Accuracy (%)")
+
+def plot_training_loss(training_data):
+    plot(training_data['loss'], "Training Loss", "Loss", "Epoch", "Loss")
+```
+
+`range(1, len(data)+1)` creates x-axis values starting from 1 (epoch 1, not epoch 0). The `training_data` dictionary returned by `train()` contains lists of accuracy and loss values, one per epoch. Plotting these over epochs lets you diagnose training behaviour: a steadily rising accuracy curve means healthy training; a flat or oscillating curve might indicate a learning rate problem or insufficient epochs.
+
+---
+
+## Running the Complete Pipeline
+
+```python
+# Parameters
+DATA_PATH           = "./newdata/"
+N_EPOCHS            = 10
+TRAINING_BATCH_SIZE = 512
+TEST_BATCH_SIZE     = 1024
+HIDDEN_LAYER_SIZE   = 1000
+MODEL_FILE          = "malware_classifier.pth"
+
+# Step 1: Load datasets
+train_loader, test_loader, n_classes = load_datasets(DATA_PATH, TRAINING_BATCH_SIZE, TEST_BATCH_SIZE)
+
+# Step 2: Initialize model
+model = MalwareClassifier(n_classes)
+
+# Step 3: Train
+print("[i] Starting Training...")
+training_information = train(model, train_loader, N_EPOCHS, verbose=True)
+
+# Step 4: Save
+save_model(model, MODEL_FILE)
+
+# Step 5: Evaluate
+accuracy = evaluate(model, test_loader)
+print(f"[i] Inference accuracy: {accuracy}%.")
+
+# Step 6: Plot
+plot_training_accuracy(training_information)
+plot_training_loss(training_information)
+```
+
+**Expected training output (10 epochs):**
+
+```
+[i] Epoch 1  of 10: Acc: 57.09%  Loss: 1.4741
+[i] Epoch 2  of 10: Acc: 85.01%  Loss: 0.4631
+[i] Epoch 3  of 10: Acc: 89.60%  Loss: 0.2880
+[i] Epoch 4  of 10: Acc: 91.88%  Loss: 0.2294
+[i] Epoch 5  of 10: Acc: 92.97%  Loss: 0.2113
+[i] Epoch 6  of 10: Acc: 93.86%  Loss: 0.1744
+[i] Epoch 7  of 10: Acc: 95.13%  Loss: 0.1572
+[i] Epoch 8  of 10: Acc: 94.81%  Loss: 0.1501
+[i] Epoch 9  of 10: Acc: 96.51%  Loss: 0.1188
+[i] Epoch 10 of 10: Acc: 96.26%  Loss: 0.1198
+[i] Inference accuracy: 88.54%.
+```
+
+The training accuracy rises rapidly in the first few epochs then levels off. Test accuracy (88.54%) is lower than final training accuracy (96.26%) – this gap represents overfitting to the training data. For a proof-of-concept with frozen weights and simple preprocessing, 88%+ is acceptable. With more epochs, unfrozen layers, data augmentation, or a larger hidden layer, accuracy would improve further.
+
+**Note for the Playground VM:** Each epoch may take up to 10 minutes. Three epochs are sufficient to meet the required accuracy threshold for the flag. On a machine with a GPU, each epoch takes under 1 minute.
+
+---
+
+## Model Upload for Evaluation
+
+```python
+import requests, json
+
+url = "http://localhost:8002/api/upload"
+model_file_path = "malware_classifier.pth"
+
+with open(model_file_path, "rb") as model_file:
+    files = {"model": model_file}
+    response = requests.post(url, files=files)
+
+print(json.dumps(response.json(), indent=4))
+```
+
+If working over VPN from your own machine, replace `localhost:8002` with `<VM-IP>:8002`. Evaluating an uploaded model may take up to 2 minutes on the VM. If the model meets the performance criteria, the server returns a JSON response containing the flag.
+
+---
+
+## Key Concepts at a Glance
+
+| Concept | Simple Explanation |
+|---|---|
+| Malware family | Group of malware programs sharing the same code base or behaviour |
+| PE file | Windows Portable Executable – the binary format of Windows programs |
+| Malware image | Grayscale PNG where each pixel = one byte of the binary (0=black, 255=white) |
+| Malimg dataset | 9,339 grayscale malware images across 25 families |
+| Class imbalance | Some families have far more samples than others |
+| split-folders | Python library for splitting image datasets into train/val/test folders |
+| ImageFolder | PyTorch class for loading folder-organized image datasets automatically |
+| `transforms.Resize` | Scales all images to a fixed size (75×75 here) |
+| `transforms.ToTensor` | Converts image to PyTorch tensor, scales pixels from [0,255] to [0.0,1.0] |
+| `transforms.Normalize` | Subtracts mean, divides by std to standardize pixel values |
+| ImageNet normalization | Mean [0.485, 0.456, 0.406] and std [0.229, 0.224, 0.225] – matches ResNet50 pre-training |
+| DataLoader | Handles batching, shuffling, and parallel data loading |
+| `shuffle=True` | Randomize image order each epoch to prevent order-based learning |
+| `num_workers=2` | 2 CPU processes load data in background while GPU trains |
+| ResNet50 | 50-layer CNN with ~23M parameters; state-of-the-art image classifier |
+| Transfer learning | Reuse weights trained on one task (ImageNet) as a starting point for another (malware) |
+| Freezing layers | Setting `requires_grad=False` – weights don't update during training |
+| Classifier head | The new fully-connected layers we add and train on malware data |
+| CrossEntropyLoss | Loss function for multi-class classification = softmax + negative log-likelihood |
+| Adam optimizer | Adaptive learning rate optimizer; usually faster and more stable than SGD |
+| `model.train()` | Switch to training mode (BatchNorm uses batch stats, Dropout active) |
+| `model.eval()` | Switch to eval mode (BatchNorm uses running stats, Dropout disabled) |
+| `torch.no_grad()` | Disable gradient tracking during inference to save memory and speed up |
+| `optimizer.zero_grad()` | Clear accumulated gradients before each batch |
+| `loss.backward()` | Run backpropagation – compute gradients of loss w.r.t. all trainable weights |
+| `optimizer.step()` | Update weights using computed gradients |
+| `torch.jit.script` | Compile model to TorchScript – self-contained portable format |
+| `.pth` file | PyTorch model file format |
+| Epoch | One complete pass through the entire training dataset |
+
+---
+
+*Notes compiled from: Applications of AI in InfoSec – Malware Image Classification, Sections 20–24.*
+
 
