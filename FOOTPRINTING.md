@@ -2275,3 +2275,1858 @@ Breaking down the flags:
 - `-o subdomains.txt` — Save results to this file
 - `-f /opt/.../subdomains-top1million-110000.txt` — Use this wordlist for brute forcing
 - `inlanefreight.htb` — Target domain
+
+
+---
+
+## Section 9: SMTP (Simple Mail Transfer Protocol)
+
+### What is SMTP?
+
+SMTP is the protocol used to send emails across IP networks. It works between email clients and outgoing mail servers, and between mail servers themselves. By default, SMTP listens on **port 25**, but newer implementations also use **port 587** (for authenticated users with STARTTLS encryption). SMTP alone is text-based and unencrypted, but ESMTP (Extended SMTP) adds support for TLS encryption via the STARTTLS command.
+
+The email flow works like this: The Mail User Agent (MUA, your email client) sends the email to a Mail Submission Agent (MSA), which validates it and passes it to the Mail Transfer Agent (MTA). The MTA looks up the recipient's mail server in DNS (MX record) and delivers the email. At the destination, the Mail Delivery Agent (MDA) puts it in the recipient's mailbox, accessible via IMAP or POP3.
+
+SMTP has two main security weaknesses: no delivery confirmation system (you might not know if an email was delivered), and no built-in sender authentication (making email spoofing easy). Technologies like SPF, DKIM, and DMARC were developed to partially address these issues.
+
+---
+
+### Default SMTP Configuration
+
+```bash
+cat /etc/postfix/main.cf | grep -v "#" | sed -r "/^\s*$/d"
+```
+
+**Purpose:** Reads the Postfix mail server configuration (the most common SMTP server on Linux) filtering out comments and blank lines.
+
+Example output:
+
+```
+smtpd_banner = ESMTP Server
+biff = no
+append_dot_mydomain = no
+compatibility_level = 2
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+myhostname = mail1.inlanefreight.htb
+alias_maps = hash:/etc/aliases
+mydestination = $myhostname, localhost
+mynetworks = 127.0.0.0/8 10.129.0.0/16
+mailbox_size_limit = 0
+smtp_bind_address = 0.0.0.0
+inet_protocols = ipv4
+smtpd_helo_restrictions = reject_invalid_hostname
+home_mailbox = /home/postfix
+```
+
+Key settings: `myhostname` reveals the server's hostname. `mynetworks` shows which networks can relay email (if set too broadly, open relay). `smtpd_banner` is what the server announces — "ESMTP Server" is generic which is good for security but less informative for us.
+
+---
+
+### SMTP Commands — Complete Reference
+
+| Command | Description |
+|---|---|
+| `HELO / EHLO` | Start the session (EHLO for extended SMTP). Client introduces itself with its hostname. EHLO response lists all server capabilities. |
+| `MAIL FROM:` | Specify the sender email address. Example: `MAIL FROM: <sender@example.com>` |
+| `RCPT TO:` | Specify the recipient email address. Multiple `RCPT TO` commands can be used for multiple recipients. |
+| `DATA` | Begin email body input. Type the email headers followed by a blank line then the message body. End with a single line containing only `.` |
+| `VRFY` | Verify if a username exists on the server. Some servers respond differently for real vs fake usernames, enabling username enumeration. |
+| `EXPN` | Expand a mailing list or verify a mailbox. Similar to VRFY but also expands mailing lists. |
+| `RSET` | Reset current mail transaction without closing connection. Clears sender, recipient, and data but keeps session open. |
+| `NOOP` | Keep connection alive (no operation). Sends a command that does nothing except keep the connection alive. |
+| `QUIT` | Close the SMTP session. |
+| `AUTH PLAIN` | Authenticate with username and password. Required by ESMTP to prevent spam relaying. |
+
+---
+
+### Performing SMTP Tasks
+
+#### Connect to SMTP Server
+
+```bash
+telnet 10.129.14.128 25
+```
+
+After connecting, you see a `220` banner. Then you send `HELO` or `EHLO` to start the session.
+
+#### HELO / EHLO Interaction
+
+```
+HELO mail1.inlanefreight.htb
+→ 250 mail1.inlanefreight.htb (server acknowledges)
+
+EHLO mail1
+→ 250-PIPELINING
+→ 250-SIZE 10240000
+→ 250-VRFY
+→ (lists all supported extensions)
+```
+
+EHLO reveals all capabilities the server supports.
+
+#### User Enumeration with VRFY
+
+```
+VRFY root
+→ 252 2.0.0 root
+
+VRFY cry0l1t3
+→ 252 2.0.0 cry0l1t3
+```
+
+The VRFY command asks if a username exists. Code `252` means the server won't confirm or deny, but many servers respond differently for real vs. fake usernames. This can be used to enumerate valid usernames.
+
+#### Sending an Email via Telnet — Complete Example
+
+```
+EHLO inlanefreight.htb
+MAIL FROM: <cry0l1t3@inlanefreight.htb>
+RCPT TO: <mrb3n@inlanefreight.htb> NOTIFY=success,failure
+DATA
+From: <cry0l1t3@inlanefreight.htb>
+To: <mrb3n@inlanefreight.htb>
+Subject: Test
+Date: Tue, 28 Sept 2021 16:32:51 +0200
+
+Message body here.
+.
+QUIT
+```
+
+Breaking down each step: `EHLO` starts extended session. `MAIL FROM` sets sender. `RCPT TO` sets recipient with `NOTIFY=success,failure` requesting delivery notifications. `DATA` begins body input. The headers (From, To, Subject, Date) are typed first, then blank line, then body. A single `.` on its own line ends the message.
+
+---
+
+### Dangerous SMTP Setting — Open Relay
+
+An Open Relay is an SMTP server that allows anyone to send email through it without authentication. The dangerous configuration is:
+
+```
+mynetworks = 0.0.0.0/0
+```
+
+This means the server accepts email from all IP addresses. Attackers can abuse this to send spam or spoofed phishing emails that appear to come from the company's own domain.
+
+---
+
+### Footprinting SMTP with Nmap
+
+#### Basic SMTP Scan
+
+```bash
+sudo nmap 10.129.14.128 -sC -sV -p25
+```
+
+The default script `smtp-commands` runs EHLO and lists all supported commands.
+
+Example output:
+
+```
+PORT   STATE SERVICE VERSION
+25/tcp open  smtp    Postfix smtpd
+|_smtp-commands: mail1.inlanefreight.htb, PIPELINING, SIZE 10240000, VRFY,
+ETRN, ENHANCEDSTATUSCODES, 8BITMIME, DSN, SMTPUTF8, CHUNKING,
+```
+
+The banner reveals it is Postfix and the hostname `mail1.inlanefreight.htb`. The VRFY capability confirms user enumeration may be possible.
+
+#### Check for Open Relay
+
+```bash
+sudo nmap 10.129.14.128 -p25 --script smtp-open-relay -v
+```
+
+**Purpose:** Runs the `smtp-open-relay` NSE script which performs 16 different relay tests against the SMTP server to determine if it can be abused as an open relay.
+
+Example output:
+
+```
+PORT   STATE SERVICE
+25/tcp open  smtp
+| smtp-open-relay: Server is an open relay (16/16 tests)
+|  MAIL FROM:<> -> RCPT TO:<relaytest@nmap.scanme.org>
+|  MAIL FROM:<antispam@nmap.scanme.org> -> RCPT TO:<relaytest@nmap.scanme.org>
+|  MAIL FROM:<antispam@ESMTP> -> RCPT TO:<relaytest@nmap.scanme.org>
+|  MAIL FROM:<antispam@[10.129.14.128]> -> RCPT TO:<relaytest@nmap.scanme.org>
+```
+
+All 16 tests passed — this server is a fully open relay. A critical finding in any penetration test.
+
+---
+
+## Section 10: IMAP / POP3
+
+### What are IMAP and POP3?
+
+Both IMAP and POP3 are protocols for **receiving** emails. **IMAP** (Internet Message Access Protocol) is the modern standard — it allows managing emails directly on the server with folder structures, works across multiple devices simultaneously, and keeps emails on the server until explicitly deleted. **POP3** (Post Office Protocol 3) is simpler — it only supports listing, retrieving, and deleting emails, and typically downloads emails to the local device and removes them from the server.
+
+IMAP uses **port 143** (plain) and **993** (SSL/TLS). POP3 uses **port 110** (plain) and **995** (SSL/TLS). The higher ports (993, 995) use TLS for encrypted communication.
+
+---
+
+### IMAP Commands — Complete Reference
+
+| Command | Description |
+|---|---|
+| `1 LOGIN username password` | Authenticate. The "1" is a tag (identifier) that labels this command — the server includes it in its response so you can match responses to commands. |
+| `1 LIST "" *` | List all folders/directories. The first `""` is the reference name (empty means start from root) and `*` is a wildcard matching all names. |
+| `1 CREATE "INBOX"` | Create a new mailbox. |
+| `1 DELETE "INBOX"` | Delete a mailbox. |
+| `1 RENAME "ToRead" "Important"` | Rename an existing mailbox folder. First argument is old name, second is new name. |
+| `1 LSUB "" *` | Returns only folders the user has subscribed to. |
+| `1 SELECT INBOX` | Select a mailbox to access its messages. After selecting, you can fetch, search, and manage messages. |
+| `1 UNSELECT INBOX` | Exits the currently selected mailbox without closing the connection. |
+| `1 FETCH <ID> all` | Retrieve all data (headers, body, flags) associated with a specific message. The ID is the message sequence number. |
+| `1 CLOSE` | Removes all messages marked with the Deleted flag from the currently selected mailbox and then deselects it. |
+| `1 LOGOUT` | Properly close the IMAP connection. |
+
+---
+
+### POP3 Commands — Complete Reference
+
+| Command | Description |
+|---|---|
+| `USER username` | Identify the user. This is the first step of POP3 authentication. |
+| `PASS password` | Provide the password for the user identified with USER. Together USER and PASS complete POP3 authentication. |
+| `STAT` | Get number of emails and total size in bytes. Response format: `+OK <count> <total-bytes>` |
+| `LIST` | List all emails with sizes. Can also take a message number to show only that message. |
+| `RETR id` | Download a specific email by ID number. The complete email including all headers and body is sent. |
+| `DELE id` | Mark a specific message for deletion. Messages are not actually deleted until the session ends with QUIT. |
+| `CAPA` | Show server capabilities and supported extensions. |
+| `RSET` | Resets the session — unmarks all messages marked for deletion. |
+| `QUIT` | Close the connection. Any messages marked with DELE are permanently deleted at this point. |
+
+---
+
+### Dangerous IMAP/POP3 Settings
+
+| Setting | Risk |
+|---|---|
+| `auth_debug` | Logs all authentication debug info (passwords might appear in logs) |
+| `auth_debug_passwords` | Logs submitted passwords in plain text. A serious security risk. |
+| `auth_verbose` | Logs failed authentication attempts (reveals valid usernames through different error messages) |
+| `auth_verbose_passwords` | Logs submitted passwords (can be truncated). |
+| `auth_anonymous_username` | Allows anonymous login via ANONYMOUS SASL mechanism. |
+
+---
+
+### Footprinting IMAP/POP3 with Nmap
+
+```bash
+sudo nmap 10.129.14.128 -sV -p110,143,993,995 -sC
+```
+
+**Purpose:** Scans all four mail protocol ports in one command. Port 110 for POP3 plain, 143 for IMAP plain, 993 for IMAP over SSL, 995 for POP3 over SSL. Default scripts reveal SSL certificates which contain organizational information.
+
+Example output:
+
+```
+PORT    STATE SERVICE  VERSION
+110/tcp open  pop3     Dovecot pop3d
+|_pop3-capabilities: AUTH-RESP-CODE SASL STLS TOP UIDL RESP-CODES CAPA PIPELINING
+| ssl-cert: Subject: commonName=mail1.inlanefreight.htb/organizationName=Inlanefreight
+| stateOrProvinceName=California/countryName=US
+| Not valid before: 2021-09-19T19:44:58
+|_Not valid after:  2295-07-04T19:44:58
+
+143/tcp open  imap     Dovecot imapd
+|_imap-capabilities: more have post-login STARTTLS LOGIN-REFERRALS LITERAL+
+| ssl-cert: Subject: commonName=mail1.inlanefreight.htb/organizationName=Inlanefreight
+
+993/tcp open  ssl/imap Dovecot imapd
+|_imap-capabilities: more have post-login AUTH=PLAINA0001 SASL-IR ENABLE IDLE IMAP4rev1
+
+995/tcp open  ssl/pop3 Dovecot pop3d
+|_pop3-capabilities: AUTH-RESP-CODE USER SASL(PLAIN) TOP UIDL RESP-CODES CAPA PIPELINING
+```
+
+All four ports are running Dovecot. The SSL certificate reveals the hostname (`mail1.inlanefreight.htb`), organization (Inlanefreight), and location (California, US).
+
+---
+
+### Connect with cURL (IMAP over SSL)
+
+```bash
+curl -k 'imaps://10.129.14.128' --user user:p4ssw0rd
+```
+
+**Purpose:** Uses cURL to connect to the IMAP server over SSL and authenticate. The `-k` flag ignores SSL certificate verification errors (useful for self-signed certs). If authentication succeeds, cURL lists the available mailbox folders.
+
+Example output:
+
+```
+* LIST (\HasNoChildren) "." Important
+* LIST (\HasNoChildren) "." INBOX
+```
+
+Two mailbox folders exist: "Important" and "INBOX".
+
+---
+
+### Verbose cURL Connection (Full TLS Handshake)
+
+```bash
+curl -k 'imaps://10.129.14.128' --user cry0l1t3:1234 -v
+```
+
+**Purpose:** The `-v` (verbose) flag shows the complete connection process including the TLS handshake, SSL certificate details, the IMAP authentication exchange, and all IMAP commands and responses.
+
+Key parts of the output:
+
+```
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384
+* Server certificate:
+*  subject: C=US; ST=California; L=Sacramento; O=Inlanefreight; OU=Customer Support;
+   CN=mail1.inlanefreight.htb; emailAddress=cry0l1t3@inlanefreight.htb
+< * OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ENABLE IDLE LITERAL+ AUTH=PLAIN]
+  HTB-Academy IMAP4 v.0.21.4
+> A002 AUTHENTICATE PLAIN AGNyeTBsMXQzADEyMzQ=
+< A002 OK Logged in
+> A003 LIST "" *
+< * LIST (\HasNoChildren) "." Important
+< * LIST (\HasNoChildren) "." INBOX
+```
+
+The certificate reveals the admin email (`cry0l1t3@inlanefreight.htb`). The IMAP banner shows `HTB-Academy IMAP4 v.0.21.4` — a custom version string.
+
+---
+
+### Connect with OpenSSL — POP3
+
+```bash
+openssl s_client -connect 10.129.14.128:pop3s
+```
+
+**Purpose:** Connects to the POP3 over SSL service using OpenSSL. Shows the complete SSL handshake and certificate information, then gives you an interactive POP3 session where you can manually type POP3 commands.
+
+### Connect with OpenSSL — IMAP
+
+```bash
+openssl s_client -connect 10.129.14.128:imaps
+```
+
+**Purpose:** Same concept but for IMAP. After the TLS handshake, you get an IMAP session where you can manually type IMAP commands. The IMAP banner at the end shows: `* OK [CAPABILITY IMAP4rev1 SASL-IR...] HTB-Academy IMAP4 v.0.21.4`
+
+
+---
+
+## Section 11: SNMP (Simple Network Management Protocol)
+
+### What is SNMP?
+
+SNMP is a protocol designed for monitoring and managing network devices such as routers, switches, servers, printers, and IoT devices. It uses **UDP port 161** for normal communication and **UDP port 162** for "traps" (unsolicited notifications from devices to the management server). SNMP exists in three versions: SNMPv1 (no authentication, no encryption — very insecure), SNMPv2c (community string-based, still no encryption), and SNMPv3 (username/password authentication, encryption — most secure but complex to configure).
+
+---
+
+### MIB and OID
+
+The **MIB** (Management Information Base) is a hierarchical text database that describes all the objects (settings, statistics) that can be queried on a device. Each object has a unique **OID** (Object Identifier) — a sequence of numbers separated by dots (e.g., `1.3.6.1.2.1.1.5.0`). By querying OIDs, you can retrieve specific information from a device.
+
+---
+
+### Community Strings
+
+Community strings are like passwords for SNMP v1 and v2. The default **public** community string is used for read access, and **private** for write access. Many administrators never change these defaults, making it easy for attackers to query device information.
+
+---
+
+### SNMP Versions
+
+| Version | Security Level | Notes |
+|---|---|---|
+| SNMPv1 | None | No authentication beyond community string, no encryption. Everything transmitted in plain text. |
+| SNMPv2c | Minimal | Community-based. Added bulk retrieval and improved error handling. Security identical to v1 — still plain text. Most widely deployed version despite its weaknesses. |
+| SNMPv3 | Strong | Added proper authentication using username and password, and encryption using a pre-shared key. Uses MD5 or SHA for authentication and DES or AES for encryption. |
+
+---
+
+### Default SNMP Configuration
+
+```bash
+cat /etc/snmp/snmpd.conf | grep -v "#" | sed -r '/^\s*$/d'
+```
+
+**Purpose:** Reads the SNMP daemon configuration file filtering out comments and blank lines to show only active settings.
+
+Example output:
+
+```
+sysLocation    Sitting on the Dock of the Bay
+sysContact     Me <me@example.org>
+sysServices    72
+master  agentx
+agentaddress  127.0.0.1,[::1]
+view   systemonly  included   .1.3.6.1.2.1.1
+view   systemonly  included   .1.3.6.1.2.1.25.1
+rocommunity  public default -V systemonly
+rocommunity6 public default -V systemonly
+rouser authPrivUser authpriv -V systemonly
+```
+
+`sysLocation` and `sysContact` are informational fields visible to SNMP clients — they reveal the physical location and admin contact. `rocommunity public default` means the read-only community string "public" is accessible from all hosts (default) but limited to the `systemonly` view. `agentaddress 127.0.0.1` limits SNMP to localhost only by default.
+
+---
+
+### Dangerous SNMP Settings
+
+| Setting | Risk |
+|---|---|
+| `rwuser noauth` | Gives read-write access to the full OID tree with NO authentication whatsoever. Anyone who knows the server is running SNMP can read and modify all device settings. Extremely dangerous. |
+| `rwcommunity <string> <IPv4 address>` | Grants full read-write access from a specific IP. If set to a broad subnet or "default" (meaning any host), attackers from those networks can modify device configurations. |
+| `rwcommunity6 <string> <IPv6 address>` | Same as above but for IPv6. Both should be checked during enumeration. |
+
+---
+
+### Performing SNMP Tasks
+
+#### SNMPwalk — Query All OIDs
+
+```bash
+snmpwalk -v2c -c public 10.129.14.128
+```
+
+Flag breakdown:
+
+- `snmpwalk` — The SNMP enumeration tool
+- `-v2c` — Use SNMP version 2c
+- `-c public` — Use "public" as the community string
+- `10.129.14.128` — Target IP address
+
+**Purpose:** Walks the entire SNMP OID tree of the target device, retrieving every piece of information the device is willing to share under the specified community string.
+
+Example output:
+
+```
+iso.3.6.1.2.1.1.1.0 = STRING: "Linux htb 5.11.0-34-generic #36~20.04.1-Ubuntu SMP..."
+iso.3.6.1.2.1.1.2.0 = OID: iso.3.6.1.4.1.8072.3.2.10
+iso.3.6.1.2.1.1.3.0 = Timeticks: (5134) 0:00:51.34
+iso.3.6.1.2.1.1.4.0 = STRING: "mrb3n@inlanefreight.htb"
+iso.3.6.1.2.1.1.5.0 = STRING: "htb"
+iso.3.6.1.2.1.1.6.0 = STRING: "Sitting on the Dock of the Bay"
+iso.3.6.1.2.1.1.7.0 = INTEGER: 72
+iso.3.6.1.2.1.25.1.4.0 = STRING: "BOOT_IMAGE=/boot/vmlinuz-5.11.0-34-generic root=UUID=..."
+iso.3.6.1.2.1.25.6.3.1.2.1232 = STRING: "printer-driver-sag-gdi_0.1-7_all"
+iso.3.6.1.2.1.25.6.3.1.2.1243 = STRING: "python3_3.8.2-0ubuntu2_amd64"
+```
+
+What this tells you: The first OID gives the OS and kernel version (Linux Ubuntu). OID `.1.4.0` reveals the admin's email (`mrb3n@inlanefreight.htb`). OID `.1.5.0` gives the hostname (`htb`). OID `.1.6.0` gives the physical location. The package list shows every installed software package — extremely valuable for finding vulnerable software versions.
+
+#### OneSixtyOne — Brute Force Community Strings
+
+Installation:
+
+```bash
+sudo apt install onesixtyone
+```
+
+Command:
+
+```bash
+onesixtyone -c /opt/useful/seclists/Discovery/SNMP/snmp.txt 10.129.14.128
+```
+
+**Purpose:** Uses a wordlist to brute force the community string. If a valid one is found, it shows the system description.
+
+- `-c /opt/useful/seclists/Discovery/SNMP/snmp.txt` — Wordlist of community strings to try
+- `10.129.14.128` — Target IP
+
+Example output:
+
+```
+Scanning 1 hosts, 3220 communities
+10.129.14.128 [public] Linux htb 5.11.0-37-generic #41~20.04.2-Ubuntu SMP...
+```
+
+Found "public" as a valid community string. The system description is shown confirming successful access. Now you can use this community string with snmpwalk.
+
+#### Braa — Fast OID Brute Force
+
+Installation:
+
+```bash
+sudo apt install braa
+```
+
+Command:
+
+```bash
+braa public@10.129.14.128:.1.3.6.*
+```
+
+**Purpose:** Once you have a valid community string, use braa to rapidly query all OIDs matching the pattern. Much faster than snmpwalk for broad enumeration because it sends many requests simultaneously.
+
+Syntax: `braa <community string>@<IP>:<OID pattern>`
+
+The `*` wildcard matches all OIDs starting with `.1.3.6.` — which covers the entire standard SNMP MIB tree.
+
+Example output:
+
+```
+10.129.14.128:20ms:.1.3.6.1.2.1.1.1.0:Linux htb 5.11.0-34-generic...
+10.129.14.128:20ms:.1.3.6.1.2.1.1.2.0:.1.3.6.1.4.1.8072.3.2.10
+10.129.14.128:20ms:.1.3.6.1.2.1.1.3.0:548
+10.129.14.128:20ms:.1.3.6.1.2.1.1.4.0:mrb3n@inlanefreight.htb
+10.129.14.128:20ms:.1.3.6.1.2.1.1.5.0:htb
+10.129.14.128:20ms:.1.3.6.1.2.1.1.6.0:US
+10.129.14.128:20ms:.1.3.6.1.2.1.1.7.0:78
+```
+
+The response time (20ms) shows how fast braa operates. Results confirm the admin email, hostname, and location.
+
+---
+
+## Section 12: MySQL
+
+### What is MySQL?
+
+MySQL is an open-source relational database management system (RDBMS) developed by Oracle. It stores data in tables with rows and columns and uses SQL (Structured Query Language) for queries. MySQL works on a client-server model — the MySQL server manages the data, and clients send queries to it. It is commonly used with web applications, especially in the LAMP stack (Linux, Apache, MySQL, PHP). Common use cases include storing website content, user credentials, product information, and configuration data. Sensitive data like passwords should be stored as hashed values, not plain text. MySQL typically runs on **TCP port 3306**.
+
+---
+
+### Default MySQL Configuration
+
+```bash
+sudo apt install mysql-server -y
+cat /etc/mysql/mysql.conf.d/mysqld.cnf | grep -v "#" | sed -r '/^\s*$/d'
+```
+
+Default port is 3306. The configuration shows the socket path, data directory, log settings, and other parameters.
+
+---
+
+### Dangerous MySQL Settings
+
+| Setting | Risk |
+|---|---|
+| `user` | Which OS user the MySQL service runs as (if set to root, very dangerous — any vulnerability could give OS-level root access) |
+| `password` | Plain text password in config file — anyone who can read the file gets database access |
+| `admin_address` | IP that admin interface listens on. If set to `0.0.0.0`, accessible from all interfaces. |
+| `debug` | Enables verbose debug output (may expose sensitive info to web app users) |
+| `sql_warnings` | Shows detailed warnings that can leak info through error messages |
+| `secure_file_priv` | Controls file import/export operations. If empty, no restrictions — MySQL can read any file the mysql user can access. |
+
+---
+
+### Footprinting MySQL with Nmap
+
+```bash
+sudo nmap 10.129.14.128 -sV -sC -p3306 --script mysql*
+```
+
+**Purpose:** The `mysql*` wildcard runs all MySQL-related scripts including `mysql-brute`, `mysql-empty-password`, `mysql-enum`, and `mysql-info`. This reveals the MySQL version, authentication plugin, and may even show valid usernames.
+
+Example output:
+
+```
+PORT     STATE SERVICE     VERSION
+3306/tcp open  nagios-nsca Nagios NSCA
+| mysql-brute:
+|   Accounts:
+|     root:<empty> - Valid credentials
+|_  Statistics: Performed 45010 guesses in 5 seconds
+| mysql-empty-password:
+|_  root account has empty password
+| mysql-enum:
+|   Valid usernames:
+|     root:<empty> - Valid credentials
+|     netadmin:<empty> - Valid credentials
+|     guest:<empty> - Valid credentials
+|     admin:<empty> - Valid credentials
+|     test:<empty> - Valid credentials
+| mysql-info:
+|   Protocol: 10
+|   Version: 8.0.26-0ubuntu0.20.04.1
+|   Thread ID: 13
+|   Auth Plugin Name: caching_sha2_password
+```
+
+The `mysql-empty-password` script found that root has no password — a critical finding. `mysql-enum` found multiple valid usernames all with empty passwords.
+
+---
+
+### Performing MySQL Tasks
+
+#### Connect to MySQL (No Password)
+
+```bash
+mysql -u root -h 10.129.14.132
+```
+
+If the server requires a password, you get an "Access denied" error. If it connects, the server allows passwordless root login — a critical security issue.
+
+#### Connect with Password
+
+```bash
+mysql -u root -pP4SSw0rd -h 10.129.14.128
+```
+
+> **Note:** No space between `-p` and the password.
+
+Successful connection:
+
+```
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MySQL connection id is 150165
+Server version: 8.0.27-0ubuntu0.20.04.1 (Ubuntu)
+
+MySQL [(none)]>
+```
+
+#### Show All Databases
+
+```sql
+MySQL [(none)]> show databases;
+```
+
+Example output:
+
+```
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+4 rows in set (0.006 sec)
+```
+
+`information_schema` contains metadata about all databases and tables. `mysql` contains user accounts and privileges. `performance_schema` contains performance monitoring data. `sys` contains human-readable views of performance data.
+
+#### Select a Database
+
+```sql
+MySQL [(none)]> use mysql;
+```
+
+#### Show Tables in Selected Database
+
+```sql
+MySQL [mysql]> show tables;
+```
+
+#### Show All Columns in a Table
+
+```sql
+show columns from user;
+```
+
+#### Select All Data from a Table
+
+```sql
+select * from user;
+```
+
+#### Check MySQL Version
+
+```sql
+select version();
+```
+
+#### View Connected Hosts
+
+```sql
+use sys;
+select host, unique_users from host_summary;
+```
+
+Example output:
+
+```
++-------------+--------------+
+| host        | unique_users |
++-------------+--------------+
+| 10.129.14.1 |            1 |
+| localhost   |            2 |
++-------------+--------------+
+```
+
+#### Search for Specific String
+
+```sql
+select * from customers where email = "test@example.com";
+```
+
+---
+
+## Section 13: MSSQL (Microsoft SQL Server)
+
+### What is MSSQL?
+
+MSSQL is Microsoft's proprietary relational database management system. It was built primarily for Windows systems and integrates deeply with the Windows OS and the .NET framework. MSSQL is very popular in enterprise environments especially those running Windows Server infrastructure. It has strong native support for Windows Authentication, meaning domain credentials can be used to authenticate to the database. MSSQL runs on **TCP port 1433** by default.
+
+---
+
+### MSSQL Client Tools
+
+- **SQL Server Management Studio (SSMS)** — GUI-based client, often installed on admin machines. If found on a compromised machine with saved credentials, it can lead to direct database access.
+- **Impacket's mssqlclient.py** — Command-line Python tool, very useful for penetration testers.
+
+Finding mssqlclient.py:
+
+```bash
+locate mssqlclient
+```
+
+Output:
+
+```
+/usr/bin/impacket-mssqlclient
+/usr/share/doc/python3-impacket/examples/mssqlclient.py
+```
+
+---
+
+### Default MSSQL Databases
+
+| Database | Description |
+|---|---|
+| `master` | Tracks all system information for the SQL server instance. Always present. |
+| `model` | Template for new databases. Any settings in model are automatically included in all newly created databases. |
+| `msdb` | Used by SQL Server Agent for scheduling jobs and alerts. Contains job history and scheduling information. |
+| `tempdb` | Stores temporary objects. Recreated from scratch every time SQL Server starts. Contains no persistent data. |
+| `resource` | A read-only hidden database containing all system objects included with SQL Server. |
+
+---
+
+### Dangerous MSSQL Configurations
+
+| Issue | Risk |
+|---|---|
+| Clients connecting without encryption | Credentials sent in plain text — interceptable by anyone on the same network. |
+| Self-signed certificates | Can be spoofed — man-in-the-middle attacks are possible. |
+| Named pipes enabled | Alternative connection method that can bypass firewall rules. |
+| Default sa (System Administrator) account with weak or empty password | Direct full-database access without authentication. |
+
+---
+
+### Footprinting MSSQL with Nmap
+
+```bash
+sudo nmap --script ms-sql-info,ms-sql-empty-password,ms-sql-xp-cmdshell,ms-sql-config,ms-sql-ntlm-info,ms-sql-tables,ms-sql-hasdbaccess,ms-sql-dac,ms-sql-dump-hashes --script-args mssql.instance-port=1433,mssql.username=sa,mssql.password=,mssql.instance-name=MSSQLSERVER -sV -p 1433 10.129.201.248
+```
+
+Script breakdown:
+
+| Script | Purpose |
+|---|---|
+| `ms-sql-info` | Gets server name, instance name, version, named pipe path, clustering status |
+| `ms-sql-empty-password` | Checks if sa or other accounts have empty passwords |
+| `ms-sql-xp-cmdshell` | Tests if the dangerous xp_cmdshell stored procedure (allows OS command execution) is enabled |
+| `ms-sql-config` | Retrieves configuration settings |
+| `ms-sql-ntlm-info` | Gets NTLM information from the authentication challenge |
+| `ms-sql-tables` | Lists tables in accessible databases |
+| `ms-sql-hasdbaccess` | Checks which databases the user has access to |
+| `ms-sql-dac` | Checks for the Dedicated Administrator Connection |
+| `ms-sql-dump-hashes` | Attempts to dump password hashes |
+
+Example output:
+
+```
+PORT     STATE SERVICE  VERSION
+1433/tcp open  ms-sql-s Microsoft SQL Server 2019 15.00.2000.00; RTM
+| ms-sql-ntlm-info:
+|   Target_Name: SQL-01
+|   NetBIOS_Domain_Name: SQL-01
+|   NetBIOS_Computer_Name: SQL-01
+|   DNS_Domain_Name: SQL-01
+|   DNS_Computer_Name: SQL-01
+|_  Product_Version: 10.0.17763
+| ms-sql-info:
+|   Windows server name: SQL-01
+|   10.129.201.248\MSSQLSERVER:
+|     Instance name: MSSQLSERVER
+|     Version: Microsoft SQL Server 2019 RTM
+|     number: 15.00.2000.00
+|     TCP port: 1433
+|     Named pipe: \\10.129.201.248\pipe\sql\query
+|_    Clustered: false
+```
+
+This reveals the server hostname (SQL-01), it is not clustered, SQL Server 2019 version, and the named pipe path.
+
+---
+
+### Metasploit — MSSQL Ping
+
+```
+msf6 > use auxiliary/scanner/mssql/mssql_ping
+msf6 auxiliary(scanner/mssql/mssql_ping) > set rhosts 10.129.201.248
+msf6 auxiliary(scanner/mssql/mssql_ping) > run
+```
+
+**Purpose:** The mssql_ping Metasploit module sends special MSSQL discovery packets to the target and retrieves key information.
+
+Example output:
+
+```
+[*] 10.129.201.248:       - SQL Server information for 10.129.201.248:
+[+] 10.129.201.248:       -    ServerName      = SQL-01
+[+] 10.129.201.248:       -    InstanceName    = MSSQLSERVER
+[+] 10.129.201.248:       -    IsClustered     = No
+[+] 10.129.201.248:       -    Version         = 15.0.2000.5
+[+] 10.129.201.248:       -    tcp             = 1433
+[+] 10.129.201.248:       -    np              = \\SQL-01\pipe\sql\query
+[*] Scanned 1 of 1 hosts (100% complete)
+```
+
+---
+
+### Connecting with mssqlclient.py
+
+```bash
+python3 mssqlclient.py Administrator@10.129.201.248 -windows-auth
+```
+
+**Purpose:** Connects to the MSSQL server using Windows Authentication (Active Directory domain credentials). The `-windows-auth` flag uses NTLM/Kerberos authentication instead of SQL Server authentication.
+
+Connection process:
+
+```
+Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+Password: [enter password here]
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: master
+[*] INFO(SQL-01): Line 1: Changed database context to 'master'.
+[*] ACK: Result: 1 - Microsoft SQL Server (150 7208)
+[!] Press help for extra shell commands
+
+SQL>
+```
+
+#### List Databases
+
+```sql
+SQL> select name from sys.databases
+```
+
+Example output:
+
+```
+name
+----
+master
+tempdb
+model
+msdb
+Transactions
+```
+
+The first four are default system databases. "Transactions" is a custom database added by the organization — a prime target for investigation.
+
+
+---
+
+## Section 14: Oracle TNS
+
+### What is Oracle TNS?
+
+Oracle TNS (Transparent Network Substrate) is a proprietary communication protocol from Oracle used to connect Oracle databases with client applications. It supports multiple network protocols and provides built-in encryption. TNS is widely used in healthcare, finance, and retail industries for large database management. The TNS listener runs on **TCP port 1521** by default and manages incoming connection requests, routing them to the correct database instance.
+
+Two key configuration files exist: `tnsnames.ora` (client-side, maps service names to network addresses) and `listener.ora` (server-side, defines what the listener process does). Both are typically in `$ORACLE_HOME/network/admin/`.
+
+---
+
+### Oracle SID
+
+The SID (System Identifier) uniquely identifies a database instance on a server. When connecting to Oracle, you must specify the SID. If the SID is unknown, it must be discovered through enumeration or brute forcing. Common default SIDs include "ORCL", "XE" (Express Edition), and "PROD".
+
+---
+
+### Oracle TNS Configuration Files
+
+Example `tnsnames.ora`:
+
+```
+ORCL =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = 10.129.11.102)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = orcl)
+    )
+  )
+```
+
+This defines a service called "ORCL" at IP 10.129.11.102 on port 1521 using TCP, connecting to the database instance named "orcl" with a dedicated server connection.
+
+Example `listener.ora`:
+
+```
+SID_LIST_LISTENER =
+  (SID_LIST =
+    (SID_DESC =
+      (SID_NAME = PDB1)
+      (ORACLE_HOME = C:\oracle\product\19.0.0\dbhome_1)
+      (GLOBAL_DBNAME = PDB1)
+    )
+  )
+
+LISTENER =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = orcl.inlanefreight.htb)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
+    )
+  )
+```
+
+The listener handles connections for the PDB1 instance and listens on both TCP port 1521 and an IPC socket.
+
+---
+
+### Setting Up ODAT
+
+```bash
+sudo apt-get install -y build-essential python3-dev libaio1
+git clone https://github.com/quentinhardy/odat.git
+cd odat/
+pip install python-libnmap
+git submodule init
+git submodule update
+sudo apt-get install python3-scapy -y
+sudo pip3 install colorlog termcolor passlib python-libnmap
+sudo apt-get install build-essential libgmp-dev -y
+pip3 install pycryptodome openpyxl
+```
+
+**Purpose:** Installs all dependencies and ODAT (Oracle Database Attacking Tool) — a comprehensive penetration testing tool for Oracle databases that can enumerate users, brute force credentials, test for vulnerabilities, and exploit misconfigurations.
+
+Verify installation:
+
+```bash
+./odat.py -h
+```
+
+---
+
+### Footprinting Oracle TNS with Nmap
+
+#### Basic TNS Scan
+
+```bash
+sudo nmap -p1521 -sV 10.129.204.235 --open
+```
+
+**Purpose:** Checks if the Oracle TNS listener is running and gets its version. The `--open` flag shows only open ports.
+
+Example output:
+
+```
+PORT     STATE SERVICE    VERSION
+1521/tcp open  oracle-tns Oracle TNS listener 11.2.0.2.0 (unauthorized)
+```
+
+Confirms the Oracle TNS listener is running version 11.2.0.2.0. The "(unauthorized)" means no authentication is required to query the listener.
+
+#### Nmap SID Brute Force
+
+```bash
+sudo nmap -p1521 -sV 10.129.204.235 --open --script oracle-sid-brute
+```
+
+**Purpose:** Uses the `oracle-sid-brute` NSE script to try common SID names against the Oracle TNS listener to discover valid database instance identifiers.
+
+Example output:
+
+```
+PORT     STATE SERVICE    VERSION
+1521/tcp open  oracle-tns Oracle TNS listener 11.2.0.2.0 (unauthorized)
+| oracle-sid-brute:
+|_  XE
+```
+
+Found SID "XE" (Oracle Express Edition). Now you can try to connect to this specific database instance.
+
+#### ODAT — Full Enumeration
+
+```bash
+./odat.py all -s 10.129.204.235
+```
+
+**Purpose:** Runs ALL ODAT modules against the target Oracle server. This attempts credential discovery, SID enumeration, user enumeration, vulnerability checks, and more.
+
+Key output:
+
+```
+[+] Checking if target 10.129.204.235:1521 is well configured for a connection...
+[+] According to a test, the TNS listener 10.129.204.235:1521 is well configured.
+
+[!] Notice: 'mdsys' account is locked, so skipping...
+[!] Notice: 'oracle_ocm' account is locked, so skipping...
+[+] Valid credentials found: scott/tiger. Continue...
+```
+
+ODAT found valid credentials: username `scott` with password `tiger`. These are famous default Oracle credentials that have been known for decades but are still found in the wild.
+
+---
+
+### Installing SQLplus
+
+```bash
+sudo apt update
+sudo apt upgrade parrot-core
+sudo apt install oracle-instantclient-sqlplus
+```
+
+Verify it works:
+
+```bash
+sqlplus -v
+```
+
+Output:
+
+```
+SQL*Plus: Release 19.0.0.0.0 - Production
+Version 19.6.0.0.0
+```
+
+Fixing library error (if it occurs):
+
+```bash
+sudo sh -c "echo /usr/lib/oracle/12.2/client64/lib > /etc/ld.so.conf.d/oracle-instantclient.conf"
+sudo ldconfig
+```
+
+---
+
+### Connecting to Oracle with SQLplus
+
+```bash
+sqlplus scott/tiger@10.129.204.235/XE
+```
+
+**Purpose:** Connects to the Oracle database instance XE using the discovered credentials. Format is `username/password@server_IP/SID`.
+
+Successful connection:
+
+```
+SQL*Plus: Release 19.0.0.0.0 - Production
+
+ERROR:
+ORA-28002: the password will expire within 7 days
+
+Connected to:
+Oracle Database 11g Express Edition Release 11.2.0.2.0 - 64bit Production
+
+SQL>
+```
+
+Even with a password expiry warning, you are connected.
+
+---
+
+### Oracle SQL Commands
+
+#### List All Tables
+
+```sql
+SQL> select table_name from all_tables;
+```
+
+**Purpose:** Lists all tables visible to the current user across all schemas.
+
+#### Check User Privileges
+
+```sql
+SQL> select * from user_role_privs;
+```
+
+Example output:
+
+```
+USERNAME     GRANTED_ROLE    ADM DEF OS_
+------------ --------------- --- --- ---
+SCOTT        CONNECT         NO  YES NO
+SCOTT        RESOURCE        NO  YES NO
+```
+
+Scott has CONNECT (can log in) and RESOURCE (can create objects) roles but no DBA privileges.
+
+#### Connect as SYSDBA (Admin)
+
+```bash
+sqlplus scott/tiger@10.129.204.235/XE as sysdba
+```
+
+**Purpose:** Attempts to connect with DBA privileges. If scott has been granted the SYSDBA system privilege, this elevates access to full database administrator level.
+
+Successful connection:
+
+```
+Connected to:
+Oracle Database 11g Express Edition Release 11.2.0.2.0 - 64bit Production
+
+SQL>
+```
+
+#### Verify Elevated Privileges
+
+```sql
+SQL> select * from user_role_privs;
+```
+
+Output as SYSDBA:
+
+```
+USERNAME  GRANTED_ROLE                   ADM DEF OS_
+--------- ------------------------------ --- --- ---
+SYS       ADM_PARALLEL_EXECUTE_TASK      YES YES NO
+SYS       APEX_ADMINISTRATOR_ROLE        YES YES NO
+SYS       DBA                            YES YES NO
+```
+
+Now connected as SYS with full DBA privileges. Complete database control achieved.
+
+#### Extract Password Hashes
+
+```sql
+SQL> select name, password from sys.user$;
+```
+
+**Purpose:** Retrieves hashed passwords from the system user table, which can be cracked offline.
+
+Example output:
+
+```
+NAME           PASSWORD
+-------------- ------------------------------
+SYS            FBA343E7D6C8BC9D
+PUBLIC
+SYSTEM         B5073FE1DE351687
+OUTLN          4A3BA55E08595C81
+```
+
+SYS and SYSTEM have DES-encrypted password hashes. These old Oracle DES hashes are weak and can be cracked quickly.
+
+#### Upload a File via ODAT (Web Shell)
+
+Step 1 — Create test file:
+
+```bash
+echo "Oracle File Upload Test" > testing.txt
+```
+
+Step 2 — Upload via ODAT:
+
+```bash
+./odat.py utlfile -s 10.129.204.235 -d XE -U scott -P tiger --sysdba --putFile C:\\inetpub\\wwwroot testing.txt ./testing.txt
+```
+
+**Purpose:** Uses ODAT's UTL_FILE module to upload a local file to the server's web root directory. If the Oracle server also runs IIS (Windows web server), uploading to `C:\inetpub\wwwroot` places the file in the publicly accessible web directory.
+
+Flag breakdown:
+
+- `utlfile` — ODAT module that uses Oracle's UTL_FILE package for file operations
+- `-s 10.129.204.235` — Target server
+- `-d XE` — Target database SID
+- `-U scott -P tiger` — Credentials
+- `--sysdba` — Connect as SYSDBA for elevated file access
+- `--putFile C:\\inetpub\\wwwroot` — Destination directory on the server
+- `testing.txt` — Destination filename
+- `./testing.txt` — Local source file
+
+Output:
+
+```
+[+] The ./testing.txt file was created on the C:\inetpub\wwwroot directory on the 10.129.204.235 server
+```
+
+Step 3 — Verify the upload:
+
+```bash
+curl -X GET http://10.129.204.235/testing.txt
+```
+
+Output:
+
+```
+Oracle File Upload Test
+```
+
+The file is accessible via HTTP — confirming you can upload files through Oracle to the web server. The next step in a real penetration test would be uploading a web shell (ASPX/PHP) instead of a text file, enabling remote command execution.
+
+
+---
+
+## Section 15: IPMI (Intelligent Platform Management Interface)
+
+### What is IPMI?
+
+IPMI is a hardware-level management system that allows administrators to manage servers independently of the operating system. Even if a server is powered off, crashed, or unresponsive, IPMI can still be used to reboot it, check hardware status, read temperature and fan speed, view hardware logs, and even reinstall the operating system. IPMI communicates over **UDP port 623** and requires a Baseboard Management Controller (BMC) — a small embedded processor directly connected to the server's motherboard. Common BMC implementations are HP iLO, Dell iDRAC, and Supermicro IPMI.
+
+---
+
+### IPMI Components
+
+| Component | Description |
+|---|---|
+| BMC (Baseboard Management Controller) | The core component. A microcontroller embedded on the server motherboard. Operates independently of the main CPU and OS. Common implementations: HP iLO, Dell iDRAC, Supermicro IPMI. |
+| ICMB (Intelligent Chassis Management Bus) | Allows communication between multiple server chassis, enabling management of chassis components like power supplies and cooling fans. |
+| IPMB (Intelligent Platform Management Bus) | Extends the BMC's reach to other hardware components on the motherboard using an I2C-based bus. |
+| IPMI Memory | Non-volatile storage for the System Event Log (SEL), sensor data repository, and field replacement unit information. |
+| Communications Interfaces | Multiple ways to access the BMC: local system interface (KCS, SMIC, BT), serial interface, LAN interface (port 623 UDP), and ICMB interface. |
+
+---
+
+### Default BMC Credentials
+
+Many BMC devices ship with default passwords that administrators never change:
+
+| Device | Username | Default Password |
+|---|---|---|
+| Dell iDRAC | root | calvin |
+| HP iLO | Administrator | randomly generated 8-character string of numbers and uppercase letters (usually printed on a label on the server) |
+| Supermicro IPMI | ADMIN | ADMIN |
+
+---
+
+### Footprinting IPMI with Nmap
+
+```bash
+sudo nmap -sU --script ipmi-version -p 623 ilo.inlanfreight.local
+```
+
+**Purpose:** Uses UDP scan to check for IPMI on port 623. The `ipmi-version` NSE script specifically identifies the IPMI version and authentication methods supported.
+
+Flag breakdown:
+
+- `sudo` — Required for UDP scanning
+- `-sU` — UDP scan (IPMI uses UDP not TCP)
+- `--script ipmi-version` — Run the IPMI version detection script
+- `-p 623` — Scan only port 623
+- `ilo.inlanfreight.local` — Target hostname
+
+Example output:
+
+```
+PORT    STATE SERVICE
+623/udp open  asf-rmcp
+| ipmi-version:
+|   Version:
+|     IPMI-2.0
+|   UserAuth:
+|   PassAuth: auth_user, non_null_user
+|_  Level: 2.0
+MAC Address: 14:03:DC:674:18:6A (Hewlett Packard Enterprise)
+```
+
+Confirms IPMI 2.0 is running. The MAC address prefix identifies it as a Hewlett Packard Enterprise server.
+
+---
+
+### Metasploit — IPMI Version Discovery
+
+```
+msf6 > use auxiliary/scanner/ipmi/ipmi_version
+msf6 auxiliary(scanner/ipmi/ipmi_version) > set rhosts 10.129.42.195
+msf6 auxiliary(scanner/ipmi/ipmi_version) > show options
+msf6 auxiliary(scanner/ipmi/ipmi_version) > run
+```
+
+**Purpose:** The Metasploit ipmi_version module sends IPMI discovery requests and reports back the version and authentication capabilities of the target BMC.
+
+Example output:
+
+```
+[*] Sending IPMI requests to 10.129.42.195->10.129.42.195 (1 hosts)
+[+] 10.129.42.195:623 - IPMI - IPMI-2.0 UserAuth(auth_msg, auth_user, non_null_user)
+PassAuth(password, md5, md2, null) Level(1.5, 2.0)
+[*] Scanned 1 of 1 hosts (100% complete)
+[*] Auxiliary module execution completed
+```
+
+This reveals that the BMC supports both IPMI 1.5 and 2.0, and even supports null (no password) authentication — a finding worth investigating.
+
+---
+
+### RAKP Protocol Vulnerability
+
+The RAKP (Remote Authenticated Key-Exchange Protocol) vulnerability is a critical flaw in IPMI 2.0 that affects all implementations. During the IPMI 2.0 authentication process, the server sends a salted SHA1 or MD5 hash of the user's password **to the client BEFORE authentication is complete**. This allows attackers to capture password hashes for any valid user account without completing the login. The hash can then be cracked offline. There is no patch for this because it is part of the IPMI 2.0 specification itself. The only mitigations are using very strong passwords or network segmentation to restrict BMC access.
+
+---
+
+### Metasploit — Dump IPMI Hashes
+
+```
+msf6 > use auxiliary/scanner/ipmi/ipmi_dumphashes
+msf6 auxiliary(scanner/ipmi/ipmi_dumphashes) > set rhosts 10.129.42.195
+msf6 auxiliary(scanner/ipmi/ipmi_dumphashes) > show options
+msf6 auxiliary(scanner/ipmi/ipmi_dumphashes) > run
+```
+
+**Purpose:** Exploits the RAKP vulnerability to retrieve password hashes from the BMC for all valid user accounts. The module also automatically attempts to crack common passwords from a built-in wordlist.
+
+Example output:
+
+```
+[+] 10.129.42.195:623 - IPMI - Hash found:
+ADMIN:8e160d4802040000205ee9253b6b8dac3052c837e23faa631260719fce740d45c3139a7dd4317b9ea
+123456789abcdefa123456789abcdef140541444d494e:a3e82878a09daa8ae3e6c22f9080f8337fe0ed7e
+
+[+] 10.129.42.195:623 - IPMI - Hash for user 'ADMIN' matches password 'ADMIN'
+[*] Scanned 1 of 1 hosts (100% complete)
+```
+
+The hash was captured AND cracked immediately — the ADMIN account uses the password "ADMIN" (the default). Now you can log into the BMC's web console with these credentials, gaining full hardware-level access to the server.
+
+#### Crack with Hashcat (mode 7300)
+
+```bash
+hashcat -m 7300 ipmi.txt -a 3 ?1?1?1?1?1?1?1?1 -1 ?d?u
+```
+
+This uses Hashcat mode 7300 (IPMI2 RAKP HMAC-SHA1) with a mask attack trying all 8-character combinations of digits and uppercase letters — targeting HP iLO factory default password format.
+
+---
+
+## Section 16: Linux Remote Management Protocols
+
+### SSH (Secure Shell)
+
+#### What is SSH?
+
+SSH (Secure Shell) enables encrypted remote access to Linux/Unix systems over **TCP port 22**. It replaced older insecure protocols like Telnet and R-Services. SSH-2 is more secure than SSH-1 and is not vulnerable to Man-in-the-Middle attacks. OpenSSH supports six authentication methods: password authentication, public-key authentication, host-based authentication, keyboard authentication, challenge-response authentication, and GSSAPI authentication.
+
+---
+
+#### Public Key Authentication — How It Works
+
+1. You generate a key pair: `ssh-keygen -t rsa -b 4096`
+2. Your public key (`~/.ssh/id_rsa.pub`) is added to the server's `~/.ssh/authorized_keys`
+3. Your private key (`~/.ssh/id_rsa`) stays on your machine, protected by a passphrase
+4. When connecting, the server encrypts a random challenge using your public key
+5. Your SSH client decrypts it with the private key and sends back the solution
+6. The server verifies the solution — if correct, access is granted
+7. Your passphrase is never sent over the network — only used locally to unlock the private key
+
+---
+
+#### Default SSH Configuration
+
+```bash
+cat /etc/ssh/sshd_config | grep -v "#" | sed -r '/^\s*$/d'
+```
+
+Example output:
+
+```
+Include /etc/ssh/sshd_config.d/*.conf
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem       sftp    /usr/lib/openssh/sftp-server
+```
+
+---
+
+#### Dangerous SSH Settings
+
+| Setting | Risk |
+|---|---|
+| `PasswordAuthentication yes` | Allows brute force attacks against passwords |
+| `PermitEmptyPasswords yes` | Allows login with no password — critical vulnerability |
+| `PermitRootLogin yes` | Root can log in directly — should always be set to `no` or `prohibit-password` |
+| `Protocol 1` | Old vulnerable SSH version susceptible to MITM attacks |
+| `X11Forwarding yes` | Allows GUI forwarding (had a command injection vulnerability in 2016 — CVE-2016-3115) |
+| `AllowTcpForwarding yes` | Attackers who gain SSH access can tunnel traffic to internal network resources |
+| `PermitTunnel` | Allows VPN-like tunneling through SSH — can bypass firewall rules |
+| `DebianBanner yes` | Displays detailed system banner on login, revealing OS information to attackers |
+
+---
+
+#### Footprinting SSH with ssh-audit
+
+```bash
+git clone https://github.com/jtesta/ssh-audit.git && cd ssh-audit
+./ssh-audit.py 10.129.14.132
+```
+
+**Purpose:** ssh-audit analyzes the SSH server's configuration and cryptographic settings without requiring authentication. It checks the SSH version, supported key exchange algorithms, host key algorithms, encryption ciphers, and message authentication codes, flagging any that are weak or deprecated.
+
+Example output:
+
+```
+# general
+(gen) banner: SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.3
+(gen) software: OpenSSH 8.2p1
+(gen) compatibility: OpenSSH 7.4+, Dropbear SSH 2018.76+
+(gen) compression: enabled (zlib@openssh.com)
+
+# key exchange algorithms
+(kex) curve25519-sha256           -- [info] available since OpenSSH 7.4
+(kex) ecdh-sha2-nistp256          -- [fail] using weak elliptic curves
+(kex) ecdh-sha2-nistp384          -- [fail] using weak elliptic curves
+(kex) diffie-hellman-group-exchange-sha256 (2048-bit) -- [info] available
+
+# host-key algorithms
+(key) rsa-sha2-512 (3072-bit)     -- [info] available since OpenSSH 7.2
+(key) ssh-rsa (3072-bit)          -- [fail] using weak hashing algorithm
+(key) ecdsa-sha2-nistp256         -- [fail] using weak elliptic curves
+(key) ssh-ed25519                 -- [info] available since OpenSSH 6.5
+```
+
+The banner reveals the exact OpenSSH version (8.2p1) and Ubuntu version. Several algorithms are flagged as weak (NIST elliptic curves, RSA-SHA1) and should be disabled.
+
+---
+
+#### Verbose SSH Connection — Checking Authentication Methods
+
+```bash
+ssh -v cry0l1t3@10.129.14.132
+```
+
+**Purpose:** The `-v` (verbose) flag shows the full SSH handshake including which authentication methods the server advertises as available. This tells you what attack methods are possible.
+
+Key output line:
+
+```
+debug1: Authentications that can continue: publickey,password,keyboard-interactive
+```
+
+This shows the server accepts three authentication methods. Password authentication being listed means brute force is possible.
+
+#### Force Password Authentication
+
+```bash
+ssh -v cry0l1t3@10.129.14.132 -o PreferredAuthentications=password
+```
+
+**Purpose:** Forces the SSH client to only try password authentication. The `-o PreferredAuthentications=password` sets the authentication method preference. Useful when you want to test password authentication specifically or when performing brute force testing.
+
+Output:
+
+```
+debug1: Authentications that can continue: publickey,password,keyboard-interactive
+debug1: Next authentication method: password
+cry0l1t3@10.129.14.132's password:
+```
+
+---
+
+### Rsync
+
+#### What is Rsync?
+
+Rsync is a file synchronization tool that uses a delta-transfer algorithm — only sending the parts of files that have changed. It uses **port 873** and can run over SSH for secure transfers. Rsync is commonly used for backups. During penetration tests, misconfigured Rsync servers may allow unauthenticated access to shared directories containing sensitive files.
+
+#### Scan for Rsync
+
+```bash
+sudo nmap -sV -p 873 127.0.0.1
+```
+
+Example output:
+
+```
+PORT    STATE SERVICE VERSION
+873/tcp open  rsync   (protocol version 31)
+```
+
+#### Probe for Available Shares with Netcat
+
+```bash
+nc -nv 127.0.0.1 873
+```
+
+**Purpose:** Opens a raw TCP connection to the Rsync port. After connecting, type `#list` to see all available Rsync modules (shares).
+
+Full interaction:
+
+```
+(UNKNOWN) [127.0.0.1] 873 (rsync) open
+@RSYNCD: 31.0
+@RSYNCD: 31.0
+#list
+dev             Dev Tools
+@RSYNCD: EXIT
+```
+
+The server shows one module called "dev" with description "Dev Tools".
+
+#### Enumerate an Open Share
+
+```bash
+rsync -av --list-only rsync://127.0.0.1/dev
+```
+
+**Purpose:** Lists all files in the "dev" Rsync module without downloading them.
+
+- `-a` — Archive mode: preserves permissions, timestamps, symbolic links
+- `-v` — Verbose output
+- `--list-only` — Only list files, do not transfer anything
+- `rsync://127.0.0.1/dev` — The Rsync URL format: rsync://server/module
+
+Example output:
+
+```
+receiving incremental file list
+drwxr-xr-x             48 2022/09/19 09:43:10 .
+-rw-r--r--              0 2022/09/19 09:34:50 build.sh
+-rw-r--r--              0 2022/09/19 09:36:02 secrets.yaml
+drwx------             54 2022/09/19 09:43:10 .ssh
+
+sent 25 bytes  received 221 bytes  492.00 bytes/sec
+```
+
+There is a `secrets.yaml` file and an `.ssh` directory (likely containing SSH keys) — immediate targets.
+
+#### Download All Files from Share
+
+```bash
+rsync -av rsync://127.0.0.1/dev ./local-copy/
+```
+
+**Purpose:** Downloads the entire "dev" module to a local directory. Without `--list-only`, rsync actually transfers everything.
+
+#### Rsync Over SSH
+
+```bash
+rsync -av -e ssh rsync://127.0.0.1/dev ./local-copy/
+# Or for non-standard SSH port:
+rsync -av -e "ssh -p2222" rsync://127.0.0.1/dev ./local-copy/
+```
+
+**Purpose:** The `-e ssh` flag tells rsync to use SSH as the transport layer, encrypting all data in transit.
+
+---
+
+### R-Services (Legacy Insecure Remote Access)
+
+#### What are R-Services?
+
+R-Services are old Unix remote access protocols developed at UC Berkeley in the 1980s. They predate SSH and were designed when security was less of a concern. They transmit ALL data including passwords in plain text and rely on trusting certain hosts rather than strong cryptographic authentication. They span ports **512** (rexec), **513** (rlogin), and **514** (rsh/rcp). They have been almost completely replaced by SSH but are occasionally still found in legacy environments.
+
+#### R-Commands Overview
+
+| Command | Description |
+|---|---|
+| `rcp` (Remote Copy) | Copies files bidirectionally between local and remote hosts. Does NOT warn about overwriting files. Uses port 514 TCP via the rshd daemon. |
+| `rsh` (Remote Shell) | Opens a shell on a remote machine without going through a login procedure. Authentication bypassed using trusted host lists. Uses port 514 TCP via rshd. |
+| `rexec` (Remote Execute) | Runs shell commands on a remote machine. Unlike rsh, it requires username and password — BUT sends them in plain text. Uses port 512 TCP via rexecd. |
+| `rlogin` (Remote Login) | Logs into a remote Unix host over the network. Authentication can be bypassed via trusted host files. Uses port 513 TCP via rlogind. |
+
+#### Trust Files
+
+R-services use two files to define trusted access:
+
+- `/etc/hosts.equiv` — System-wide trust file. Lists trusted hostnames and usernames. Any combination listed here can access the system without a password.
+- `~/.rhosts` — Per-user trust file in each user's home directory. Similar format but only affects that specific user.
+
+Viewing `/etc/hosts.equiv`:
+
+```bash
+cat /etc/hosts.equiv
+```
+
+Output:
+
+```
+# pwnbox cry0l1t3
+```
+
+This trusts the user "cry0l1t3" coming from the host "pwnbox" — no password needed.
+
+Example `.rhosts` file:
+
+```
+htb-student     10.0.17.5
++               10.0.17.10
++               +
+```
+
+The `+` is a wildcard meaning "any". `+ +` trusts ANYONE from ANYWHERE — completely open access, the worst possible configuration.
+
+#### Scan for R-Services
+
+```bash
+sudo nmap -sV -p 512,513,514 10.0.17.2
+```
+
+Example output:
+
+```
+PORT    STATE SERVICE    VERSION
+512/tcp open  exec?
+513/tcp open  login?
+514/tcp open  tcpwrapped
+```
+
+All three ports are open — R-services are running on this legacy system.
+
+#### Login with Rlogin
+
+```bash
+rlogin 10.0.17.2 -l htb-student
+```
+
+**Purpose:** Attempts to log in to the remote host as "htb-student" using rlogin. If the `.rhosts` file trusts your machine for this user, you log in without a password.
+
+Successful login:
+
+```
+Last login: Fri Dec  2 16:11:21 from localhost
+[htb-student@localhost ~]$
+```
+
+No password was required. Access granted through the misconfigured `.rhosts` trust file.
+
+#### List Active Users with Rwho
+
+```bash
+rwho
+```
+
+**Purpose:** The rwho (Remote Who) command queries the rwho daemon running on systems across the local network to discover all currently logged-in users.
+
+Example output:
+
+```
+root     web01:pts/0 Dec  2 21:34
+htb-student     workstn01:tty1  Dec  2 19:57  2:25
+```
+
+Shows "root" is logged into web01 (remote session) and "htb-student" is logged into workstn01 on a physical terminal with 2 hours and 25 minutes idle time.
+
+#### Detailed User Listing with Rusers
+
+```bash
+rusers -al 10.0.17.5
+```
+
+**Purpose:** Provides more detailed information than rwho for a specific host. Shows username, hostname, TTY (terminal), login date/time, idle time, and remote host they connected from.
+
+- `-a` — Show all users including idle ones
+- `-l` — Long format (detailed output)
+
+Example output:
+
+```
+htb-student     10.0.17.5:console          Dec 2 19:57     2:25
+```
+
+Shows htb-student logged in via the physical console at 10.0.17.5 on December 2nd, idle for 2 hours and 25 minutes.
+
+
+---
+
+## Section 17: Windows Remote Management Protocols
+
+### RDP (Remote Desktop Protocol)
+
+#### What is RDP?
+
+RDP is Microsoft's proprietary protocol for graphical remote access to Windows systems. Unlike SSH which is command-line only, RDP gives you complete control of the Windows desktop — seeing the screen and controlling mouse and keyboard — just as if you were sitting in front of it. RDP uses **TCP port 3389** (and optionally UDP 3389 for improved performance). RDP has supported TLS/SSL encryption since Windows Vista. Network Level Authentication (NLA) adds an extra layer of security by requiring authentication before the full RDP session is established, preventing unauthorized access to the login screen.
+
+---
+
+#### Footprinting RDP with Nmap
+
+```bash
+nmap -sV -sC 10.129.201.248 -p3389 --script rdp*
+```
+
+**Purpose:** Scans RDP port 3389 with all RDP-related NSE scripts. The `rdp*` wildcard runs `rdp-enum-encryption`, `rdp-ntlm-info`, and other RDP scripts.
+
+Example output:
+
+```
+PORT     STATE SERVICE       VERSION
+3389/tcp open  ms-wbt-server Microsoft Terminal Services
+| rdp-enum-encryption:
+|   Security layer
+|     CredSSP (NLA): SUCCESS
+|     CredSSP with Early User Auth: SUCCESS
+|_    RDSTLS: SUCCESS
+| rdp-ntlm-info:
+|   Target_Name: ILF-SQL-01
+|   NetBIOS_Domain_Name: ILF-SQL-01
+|   NetBIOS_Computer_Name: ILF-SQL-01
+|   DNS_Domain_Name: ILF-SQL-01
+|   DNS_Computer_Name: ILF-SQL-01
+|   Product_Version: 10.0.17763
+|_  System_Time: 2021-11-06T13:46:00+00:00
+```
+
+The `rdp-enum-encryption` script shows NLA is supported (CredSSP SUCCESS). The `rdp-ntlm-info` script reveals the hostname (ILF-SQL-01), domain name, and Windows version (10.0.17763 = Windows Server 2019).
+
+---
+
+#### RDP Packet Trace
+
+```bash
+nmap -sV -sC 10.129.201.248 -p3389 --packet-trace --disable-arp-ping -n
+```
+
+**Purpose:** Adds `--packet-trace` to show all raw network packets exchanged during the scan. This reveals exactly what data is sent and received at the network level.
+
+> **Important security note:** Nmap RDP scripts use `mstshash=nmap` as an RDP cookie. Security tools, EDR (Endpoint Detection and Response) systems, and threat hunters specifically look for this string in network traffic to identify Nmap scans. On hardened networks, this could trigger alerts and get you blocked.
+
+---
+
+#### Check RDP Security Settings with rdp-sec-check.pl
+
+Installation:
+
+```bash
+sudo cpan
+cpan[1]> install Encoding::BER
+git clone https://github.com/CiscoCXSecurity/rdp-sec-check.git && cd rdp-sec-check
+```
+
+Command:
+
+```bash
+./rdp-sec-check.pl 10.129.201.248
+```
+
+**Purpose:** A Perl script that checks RDP security configurations without authenticating. It tests which security layers and encryption methods the server supports by sending specially crafted RDP handshake packets.
+
+Example output:
+
+```
+[+] Checking supported protocols
+[-] Checking if RDP Security (PROTOCOL_RDP) is supported...Not supported - HYBRID_REQUIRED_BY_SERVER
+[-] Checking if TLS Security (PROTOCOL_SSL) is supported...Not supported - HYBRID_REQUIRED_BY_SERVER
+[-] Checking if CredSSP Security (PROTOCOL_HYBRID) is supported [uses NLA]...Supported
+
+[+] Summary of protocol support
+[-] 10.129.201.248:3389 supports PROTOCOL_SSL   : FALSE
+[-] 10.129.201.248:3389 supports PROTOCOL_HYBRID: TRUE
+[-] 10.129.201.248:3389 supports PROTOCOL_RDP   : FALSE
+
+[+] Summary of RDP encryption support
+[-] 10.129.201.248:3389 supports ENCRYPTION_METHOD_NONE   : FALSE
+[-] 10.129.201.248:3389 supports ENCRYPTION_METHOD_40BIT  : FALSE
+[-] 10.129.201.248:3389 supports ENCRYPTION_METHOD_128BIT : FALSE
+[-] 10.129.201.248:3389 supports ENCRYPTION_METHOD_FIPS   : FALSE
+```
+
+This server only supports PROTOCOL_HYBRID (NLA with CredSSP). Plain RDP and TLS without NLA are both rejected. All legacy encryption methods are disabled — a well-hardened RDP configuration.
+
+---
+
+#### Connect via RDP from Linux
+
+```bash
+xfreerdp /u:cry0l1t3 /p:"P455w0rd!" /v:10.129.201.248
+```
+
+**Purpose:** Initiates an RDP session from Linux using the xfreerdp client. Opens a full graphical Windows desktop window.
+
+Flag breakdown:
+
+- `xfreerdp` — The FreeRDP client for Linux (X11 version)
+- `/u:cry0l1t3` — Username
+- `/p:"P455w0rd!"` — Password (in quotes to handle special characters)
+- `/v:10.129.201.248` — Target server IP
+
+During connection, a certificate warning appears. Type `Y` to accept and proceed. After successful authentication, a Windows desktop window appears.
+
+---
+
+### WinRM (Windows Remote Management)
+
+#### What is WinRM?
+
+WinRM is a command-line remote management protocol for Windows based on the WS-Management standard. It uses SOAP (Simple Object Access Protocol) for communication and requires explicit enabling on older Windows systems. Ports used are **5985** (HTTP) and **5986** (HTTPS). WinRM is enabled by default on Windows Server 2012 and later. WinRS (Windows Remote Shell) is the client-side component that allows executing arbitrary commands on remote systems through WinRM. PowerShell remote sessions also use WinRM as their transport.
+
+---
+
+#### Footprinting WinRM with Nmap
+
+```bash
+nmap -sV -sC 10.129.201.248 -p5985,5986 --disable-arp-ping -n
+```
+
+**Purpose:** Scans both WinRM ports. The `--disable-arp-ping` and `-n` flags disable ARP ping and DNS resolution to speed up the scan.
+
+Example output:
+
+```
+PORT     STATE SERVICE VERSION
+5985/tcp open  http    Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-title: Not Found
+|_http-server-header: Microsoft-HTTPAPI/2.0
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+```
+
+Port 5985 is open (HTTP WinRM). The server header confirms it is Windows. The "Not Found" response to a basic HTTP request is expected — WinRM uses specific SOAP endpoints, not regular web pages.
+
+---
+
+#### Connect with Evil-WinRM (from Linux)
+
+```bash
+evil-winrm -i 10.129.201.248 -u Cry0l1t3 -p P455w0rD!
+```
+
+**Purpose:** Evil-WinRM is a penetration testing tool designed specifically to interact with WinRM from Linux. It provides a feature-rich interactive PowerShell shell on the remote Windows system.
+
+Flag breakdown:
+
+- `evil-winrm` — The tool
+- `-i 10.129.201.248` — Target IP address
+- `-u Cry0l1t3` — Username
+- `-p P455w0rD!` — Password
+
+Successful connection:
+
+```
+Evil-WinRM shell v3.3
+
+Warning: Remote path completions is disabled due to ruby limitation
+
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\Cry0l1t3\Documents>
+```
+
+You now have a PowerShell prompt inside the remote Windows system. You can run any PowerShell command, upload/download files, and manage the system as if sitting at it.
+
+---
+
+### WMI (Windows Management Instrumentation)
+
+#### What is WMI?
+
+WMI is Microsoft's implementation of WBEM (Web-Based Enterprise Management) and provides nearly universal read and write access to Windows system settings. It is accessed via PowerShell, VBScript, or the command-line tool `wmic`. WMI communication starts on **TCP port 135**, then moves to a random port. This makes WMI harder to block with simple firewall rules. WMI provides read and write access to hardware, software, OS configuration, running processes, network settings, user accounts, installed applications, and much more.
+
+---
+
+#### Connect with wmiexec.py (Impacket)
+
+```bash
+/usr/share/doc/python3-impacket/examples/wmiexec.py Cry0l1t3:"P455w0rD!"@10.129.201.248 "hostname"
+```
+
+**Purpose:** `wmiexec.py` from the Impacket toolkit uses WMI to execute commands on remote Windows systems from Linux. It authenticates using provided credentials and runs the specified command, returning the output.
+
+Flag breakdown:
+
+- `/usr/share/doc/python3-impacket/examples/wmiexec.py` — Full path to the script
+- `Cry0l1t3:"P455w0rD!"@10.129.201.248` — Credentials and target in format `username:password@IP`
+- `"hostname"` — The Windows command to execute remotely
+
+Example output:
+
+```
+Impacket v0.9.22 - Copyright 2020 SecureAuth Corporation
+
+[*] SMBv3.0 dialect used
+ILF-SQL-01
+```
+
+The command `hostname` was executed on the remote Windows system and returned "ILF-SQL-01" — confirming successful remote command execution via WMI. In a real penetration test, you would run more powerful commands like `whoami /all` (check privileges), `net user` (list users), or `ipconfig /all` (network configuration).
+
+---
+
+*These notes cover all sections completely with every command explained — its purpose, usage, flags, and how to perform each task. No content has been skipped or summarized.*
