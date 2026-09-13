@@ -2,6 +2,28 @@
 
 ---
 
+## Table of Contents
+
+- [Section 1: Enumeration Methodology (6 Layers)](#section-1-enumeration-methodology)
+- [Section 2: Domain Information](#section-2-domain-information)
+- [Section 3: Cloud Resources](#section-3-cloud-resources)
+- [Section 4: Staff — OSINT on Employees](#section-4-staff--osint-on-employees)
+- [Section 5: FTP — Full Detail (TFTP, vsFTPd, All Commands, Nmap NSE, OpenSSL)](#section-5-ftp-file-transfer-protocol)
+- [Section 6: SMB — (Samba, RPCclient, samrdump, SMBmap, CrackMapExec, Enum4Linux-ng)](#section-6-smb-server-message-block)
+- [Section 7: NFS — (All Versions, Mount Steps, Dangerous Settings)](#section-7-nfs-network-file-system)
+- [Section 8: DNS — (All Record Types, BIND9, AXFR Zone Transfer, DNSenum)](#section-8-dns-domain-name-system)
+- [Section 9: SMTP — (All Commands, Open Relay, Nmap Scripts)](#section-9-smtp-simple-mail-transfer-protocol)
+- [Section 10: IMAP / POP3 — (All Commands, cURL, OpenSSL)](#section-10-imap--pop3)
+- [Section 11: SNMP — (MIB/OID, SNMPwalk, OneSixtyOne, Braa)](#section-11-snmp-simple-network-management-protocol)
+- [Section 12: MySQL — (All SQL Commands, Nmap Scripts)](#section-12-mysql)
+- [Section 13: MSSQL — (mssqlclient.py, Metasploit, Nmap Scripts)](#section-13-mssql-microsoft-sql-server)
+- [Section 14: Oracle TNS — (ODAT, SQLplus, File Upload via UTL_FILE)](#section-14-oracle-tns)
+- [Section 15: IPMI — (RAKP Vulnerability, Hashcat Cracking)](#section-15-ipmi-intelligent-platform-management-interface)
+- [Section 16: Linux Remote Management — (SSH, Rsync, R-Services)](#section-16-linux-remote-management-protocols)
+- [Section 17: Windows Remote Management — (RDP, WinRM, WMI)](#section-17-windows-remote-management-protocols)
+
+---
+
 ## Section 1: Enumeration Methodology
 
 ### What is Enumeration Methodology?
