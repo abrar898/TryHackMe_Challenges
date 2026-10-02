@@ -95,6 +95,13 @@
     - [Encryption Types and Downgrade Attacks](#encryption-types-and-downgrade-attacks)
     - [Mitigation & Detection for Kerberoasting](#mitigation--detection-for-kerberoasting)
 
+17. [Access Control List (ACL) Abuse Primer](#17-access-control-list-acl-abuse-primer)
+- [ACL Overview](#171-access-control-list-acl-overview)
+- [Access Control Entries (ACEs)](#172-access-control-entries-aces)
+- [Why Are ACEs Important?](#173-why-are-aces-important)
+- [ACL Attacks in the Wild](#174-acl-attacks-in-the-wild)
+    
+
 ---
 
 ## Introduction to Active Directory Enumeration & Attacks
