@@ -3193,6 +3193,11 @@ Regardless of what access the cracked account provides, we should continue diggi
 
 ---
 
+# Active Directory Security Notes
+## Comprehensive Study Guide: ACL Abuse, Attacks, Trusts & Misconfigurations
+
+---
+
 # 17. Access Control List (ACL) Abuse Primer
 
 ## 17.1 Access Control List (ACL) Overview
@@ -6981,6 +6986,9 @@ Domain trusts are a large and complex topic. The techniques in this module provi
 
 *End of Active Directory Security Notes*
 
+---
+
+> **Study Tip:** The attack chains in this module follow a logical progression: ACL enumeration → ACL abuse → DCSync → privileged access → trust attacks. Understanding each step and its dependencies is key to applying these techniques during real assessments.
 ---
 
 > **Study Tip:** The attack chains in this module follow a logical progression: ACL enumeration → ACL abuse → DCSync → privileged access → trust attacks. Understanding each step and its dependencies is key to applying these techniques during real assessments.
