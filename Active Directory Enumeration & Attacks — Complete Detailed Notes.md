@@ -101,7 +101,162 @@
 - [Why Are ACEs Important?](#173-why-are-aces-important)
 - [ACL Attacks in the Wild](#174-acl-attacks-in-the-wild)
     
-
+Introduction to Active Directory Enumeration & Attacks
+Active Directory Explained
+Why Should We Care About AD?
+Real-World Examples
+Practical Examples & Lab Setup
+External Recon and Enumeration Principles
+What Are We Looking For?
+Where Are We Looking?
+Finding Address Spaces
+DNS
+Public Data
+Username Harvesting
+Credential Hunting
+Overarching Enumeration Principles
+Initial Enumeration of the Domain
+Setting Up
+Key Data Points
+Identifying Hosts
+Fping Active Checks
+Nmap Scanning
+Identifying Users with Kerbrute
+Identifying Potential Vulnerabilities
+LLMNR/NBT-NS Poisoning - from Linux
+LLMNR & NBT-NS Primer
+Responder In Action
+Cracking NTLMv2 Hashes with Hashcat
+Remediation
+Detection
+LLMNR/NBT-NS Poisoning - from Windows
+Inveigh - Overview
+C# Inveigh (InveighZero)
+Password Spraying Overview
+Password Spraying Considerations
+Enumerating & Retrieving Password Policies
+Credentialed Enumeration from Linux
+SMB NULL Sessions
+LDAP Anonymous Bind
+Enumerating from Windows
+Analyzing the Password Policy
+Password Spraying - Making a Target User List
+SMB NULL Session to Pull User List
+Gathering Users with LDAP Anonymous
+Enumerating Users with Kerbrute
+Credentialed Enumeration to Build User List
+Internal Password Spraying - from Linux
+Using rpcclient Bash One-liner
+Using Kerbrute for Password Spraying
+Using CrackMapExec
+Local Administrator Password Reuse
+Internal Password Spraying - from Windows
+Using DomainPasswordSpray.ps1
+Mitigations and Detection
+Enumerating Security Controls
+Windows Defender
+AppLocker
+PowerShell Constrained Language Mode
+LAPS
+Credentialed Enumeration - from Linux
+CrackMapExec
+SMBMap
+rpcclient
+Impacket Toolkit
+Windapsearch
+Bloodhound.py
+Credentialed Enumeration - from Windows
+ActiveDirectory PowerShell Module
+PowerView
+SharpView
+Snaffler
+BloodHound from Windows
+Living Off the Land
+Basic Enumeration Commands
+Harnessing PowerShell
+Downgrade PowerShell
+Checking Defenses
+Network Information
+Windows Management Instrumentation (WMI)
+Net Commands
+Dsquery
+LDAP Filtering Explained
+Kerberoasting - from Linux
+Kerberoasting Overview
+Performing the Attack with GetUserSPNs.py
+Kerberoasting - from Windows
+Semi-Manual Method with setspn.exe
+Extracting Tickets with Mimikatz
+Automated Kerberoasting with PowerView
+Kerberoasting with Rubeus
+Encryption Types and Downgrade Attacks
+Mitigation & Detection for Kerberoasting
+Access Control List (ACL) Abuse Primer
+ACL Overview
+Access Control Entries (ACEs)
+Why Are ACEs Important?
+ACL Attacks in the Wild
+ACL Enumeration
+Enumerating ACLs with PowerView
+Enumerating ACLs with BloodHound
+ACL Abuse Tactics
+Full Attack Chain Overview
+Step-by-Step Exploitation Commands
+Cleanup After the Attack
+Detection and Remediation of ACL Abuse
+DCSync Attack
+What is DCSync and How Does it Work?
+Verifying Replication Rights
+Extracting NTLM Hashes with secretsdump.py
+Checking for Reversible Encryption
+Performing DCSync with Mimikatz
+Privileged Access
+Overview of Lateral Movement Methods
+Remote Desktop (RDP) Access
+WinRM / PowerShell Remoting Access
+SQL Server Admin Access
+Kerberos Double Hop Problem
+Background and Explanation
+Workaround 1 — PSCredential Object
+Workaround 2 — Register PSSession Configuration
+Bleeding Edge Vulnerabilities
+NoPac — CVE-2021-42278 & CVE-2021-42287
+PrintNightmare — CVE-2021-34527
+PetitPotam — CVE-2021-36942
+Miscellaneous Misconfigurations
+Exchange Related Group Membership
+PrivExchange
+Printer Bug (MS-RPRN)
+MS14-068
+Sniffing LDAP Credentials
+Enumerating DNS Records with adidnsdump
+Password in Description Field
+PASSWD_NOTREQD Field
+Credentials in SMB Shares and SYSVOL Scripts
+Group Policy Preferences (GPP) Passwords
+ASREPRoasting
+Group Policy Object (GPO) Abuse
+Domain Trusts Primer
+Why Trusts Matter
+Domain Trusts Overview
+Enumerating Trust Relationships
+Attacking Domain Trusts — Child to Parent (Windows)
+SID History Primer
+ExtraSids Attack Overview
+ExtraSids Attack with Mimikatz
+ExtraSids Attack with Rubeus
+Attacking Domain Trusts — Child to Parent (Linux)
+DCSync with secretsdump.py
+Brute Forcing SIDs with lookupsid.py
+Golden Ticket with ticketer.py
+Automated Attack with raiseChild.py
+Attacking Domain Trusts — Cross-Forest (Windows)
+Cross-Forest Kerberoasting
+Admin Password Re-Use and Foreign Group Membership
+SID History Abuse Cross Forest
+Attacking Domain Trusts — Cross-Forest (Linux)
+Cross-Forest Kerberoasting with GetUserSPNs.py
+Hunting Foreign Group Membership with BloodHound-Python
 ---
 
 ## Introduction to Active Directory Enumeration & Attacks
