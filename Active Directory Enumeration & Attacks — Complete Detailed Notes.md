@@ -94,169 +94,75 @@
     - [Kerberoasting with Rubeus](#kerberoasting-with-rubeus)
     - [Encryption Types and Downgrade Attacks](#encryption-types-and-downgrade-attacks)
     - [Mitigation & Detection for Kerberoasting](#mitigation--detection-for-kerberoasting)
-
 17. [Access Control List (ACL) Abuse Primer](#17-access-control-list-acl-abuse-primer)
-- [ACL Overview](#171-access-control-list-acl-overview)
-- [Access Control Entries (ACEs)](#172-access-control-entries-aces)
-- [Why Are ACEs Important?](#173-why-are-aces-important)
-- [ACL Attacks in the Wild](#174-acl-attacks-in-the-wild)
+    - [ACL Overview](#171-access-control-list-acl-overview)
+    - [Access Control Entries (ACEs)](#172-access-control-entries-aces)
+    - [Why Are ACEs Important?](#173-why-are-aces-important)
+    - [ACL Attacks in the Wild](#174-acl-attacks-in-the-wild)
+18. [ACL Enumeration](#18-acl-enumeration)
+    - [Enumerating ACLs with PowerView](#181-enumerating-acls-with-powerview)
+    - [Enumerating ACLs with BloodHound](#182-enumerating-acls-with-bloodhound)
+19. [ACL Abuse Tactics](#19-acl-abuse-tactics)
+    - [Full Attack Chain Overview](#191-full-attack-chain-overview)
+    - [Step-by-Step Exploitation Commands](#192-step-by-step-exploitation-commands)
+    - [Cleanup After the Attack](#193-cleanup-after-the-attack)
+    - [Detection and Remediation of ACL Abuse](#194-detection-and-remediation-of-acl-abuse)
+20. [DCSync Attack](#20-dcsync-attack)
+    - [What is DCSync and How Does it Work?](#201-what-is-dcsync-and-how-does-it-work)
+    - [Verifying Replication Rights](#202-verifying-replication-rights)
+    - [Extracting NTLM Hashes Using secretsdump.py](#203-extracting-ntlm-hashes-and-kerberos-keys-using-secretsdumppy)
+    - [Checking for Reversible Encryption](#204-checking-for-reversible-encryption)
+    - [Performing DCSync with Mimikatz](#205-performing-dcsync-with-mimikatz-windows)
+21. [Privileged Access](#21-privileged-access)
+    - [Overview of Lateral Movement Methods](#211-overview-of-lateral-movement-methods)
+    - [Remote Desktop (RDP) Access](#212-remote-desktop-rdp-access)
+    - [WinRM / PowerShell Remoting Access](#213-winrm--powershell-remoting-access)
+    - [SQL Server Admin Access](#214-sql-server-admin-access)
+22. [Kerberos Double Hop Problem](#22-kerberos-double-hop-problem)
+    - [Background and Explanation](#221-background-and-explanation)
+    - [Workaround 1 — PSCredential Object](#222-workaround-1--pscredential-object)
+    - [Workaround 2 — Register PSSession Configuration](#223-workaround-2--register-pssession-configuration)
+23. [Bleeding Edge Vulnerabilities](#23-bleeding-edge-vulnerabilities)
+    - [Introduction and Safety Considerations](#231-introduction-and-safety-considerations)
+    - [NoPac — CVE-2021-42278 & CVE-2021-42287](#232-nopac-samaccountname-spoofing--cve-2021-42278--cve-2021-42287)
+    - [PrintNightmare — CVE-2021-34527](#233-printnightmare--cve-2021-34527--cve-2021-1675)
+    - [PetitPotam — CVE-2021-36942](#234-petitpotam-ms-efsrpc--cve-2021-36942)
+24. [Miscellaneous Misconfigurations](#24-miscellaneous-misconfigurations)
+    - [Exchange Related Group Membership](#241-exchange-related-group-membership)
+    - [PrivExchange](#242-privexchange)
+    - [Printer Bug (MS-RPRN)](#243-printer-bug-ms-rprn)
+    - [MS14-068](#244-ms14-068)
+    - [Sniffing LDAP Credentials](#245-sniffing-ldap-credentials)
+    - [Enumerating DNS Records with adidnsdump](#246-enumerating-dns-records-with-adidnsdump)
+    - [Password in Description Field](#247-password-in-description-field)
+    - [PASSWD_NOTREQD Field](#248-passwd_notreqd-field)
+    - [Credentials in SMB Shares and SYSVOL Scripts](#249-credentials-in-smb-shares-and-sysvol-scripts)
+    - [Group Policy Preferences (GPP) Passwords](#2410-group-policy-preferences-gpp-passwords)
+    - [ASREPRoasting](#2411-asreproasting)
+    - [Group Policy Object (GPO) Abuse](#2412-group-policy-object-gpo-abuse)
+25. [Domain Trusts Primer](#25-domain-trusts-primer)
+    - [Why Trusts Matter](#251-scenario--why-trusts-matter)
+    - [Domain Trusts Overview](#252-domain-trusts-overview)
+    - [Enumerating Trust Relationships](#253-enumerating-trust-relationships)
+26. [Attacking Domain Trusts — Child to Parent (Windows)](#26-attacking-domain-trusts--child--parent-windows)
+    - [SID History Primer](#261-sid-history-primer)
+    - [ExtraSids Attack Overview](#262-extrasids-attack--overview-and-requirements)
+    - [ExtraSids Attack with Mimikatz](#263-extrasids-attack-with-mimikatz)
+    - [ExtraSids Attack with Rubeus](#264-extrasids-attack-with-rubeus)
+27. [Attacking Domain Trusts — Child to Parent (Linux)](#27-attacking-domain-trusts--child--parent-linux)
+    - [DCSync with secretsdump.py](#271-performing-dcsync-with-secretsdumppy)
+    - [Brute Forcing SIDs with lookupsid.py](#272-brute-forcing-sids-with-lookupsidpy)
+    - [Golden Ticket with ticketer.py](#273-constructing-a-golden-ticket-using-ticketerpy)
+    - [Getting a SYSTEM Shell via psexec.py](#274-getting-a-system-shell-via-psexecpy)
+    - [Automated Attack with raiseChild.py](#275-automated-attack-with-raisechildpy)
+28. [Attacking Domain Trusts — Cross-Forest (Windows)](#28-attacking-domain-trusts--cross-forest-windows)
+    - [Cross-Forest Kerberoasting](#282-cross-forest-kerberoasting)
+    - [Admin Password Re-Use and Foreign Group Membership](#283-admin-password-re-use-and-foreign-group-membership)
+    - [SID History Abuse Cross Forest](#284-sid-history-abuse--cross-forest)
+29. [Attacking Domain Trusts — Cross-Forest (Linux)](#29-attacking-domain-trusts--cross-forest-linux)
+    - [Cross-Forest Kerberoasting with GetUserSPNs.py](#291-cross-forest-kerberoasting-with-getuserspnspy)
+    - [Hunting Foreign Group Membership with BloodHound-Python](#292-hunting-foreign-group-membership-with-bloodhound-python)
     
-Introduction to Active Directory Enumeration & Attacks
-Active Directory Explained
-Why Should We Care About AD?
-Real-World Examples
-Practical Examples & Lab Setup
-External Recon and Enumeration Principles
-What Are We Looking For?
-Where Are We Looking?
-Finding Address Spaces
-DNS
-Public Data
-Username Harvesting
-Credential Hunting
-Overarching Enumeration Principles
-Initial Enumeration of the Domain
-Setting Up
-Key Data Points
-Identifying Hosts
-Fping Active Checks
-Nmap Scanning
-Identifying Users with Kerbrute
-Identifying Potential Vulnerabilities
-LLMNR/NBT-NS Poisoning - from Linux
-LLMNR & NBT-NS Primer
-Responder In Action
-Cracking NTLMv2 Hashes with Hashcat
-Remediation
-Detection
-LLMNR/NBT-NS Poisoning - from Windows
-Inveigh - Overview
-C# Inveigh (InveighZero)
-Password Spraying Overview
-Password Spraying Considerations
-Enumerating & Retrieving Password Policies
-Credentialed Enumeration from Linux
-SMB NULL Sessions
-LDAP Anonymous Bind
-Enumerating from Windows
-Analyzing the Password Policy
-Password Spraying - Making a Target User List
-SMB NULL Session to Pull User List
-Gathering Users with LDAP Anonymous
-Enumerating Users with Kerbrute
-Credentialed Enumeration to Build User List
-Internal Password Spraying - from Linux
-Using rpcclient Bash One-liner
-Using Kerbrute for Password Spraying
-Using CrackMapExec
-Local Administrator Password Reuse
-Internal Password Spraying - from Windows
-Using DomainPasswordSpray.ps1
-Mitigations and Detection
-Enumerating Security Controls
-Windows Defender
-AppLocker
-PowerShell Constrained Language Mode
-LAPS
-Credentialed Enumeration - from Linux
-CrackMapExec
-SMBMap
-rpcclient
-Impacket Toolkit
-Windapsearch
-Bloodhound.py
-Credentialed Enumeration - from Windows
-ActiveDirectory PowerShell Module
-PowerView
-SharpView
-Snaffler
-BloodHound from Windows
-Living Off the Land
-Basic Enumeration Commands
-Harnessing PowerShell
-Downgrade PowerShell
-Checking Defenses
-Network Information
-Windows Management Instrumentation (WMI)
-Net Commands
-Dsquery
-LDAP Filtering Explained
-Kerberoasting - from Linux
-Kerberoasting Overview
-Performing the Attack with GetUserSPNs.py
-Kerberoasting - from Windows
-Semi-Manual Method with setspn.exe
-Extracting Tickets with Mimikatz
-Automated Kerberoasting with PowerView
-Kerberoasting with Rubeus
-Encryption Types and Downgrade Attacks
-Mitigation & Detection for Kerberoasting
-Access Control List (ACL) Abuse Primer
-ACL Overview
-Access Control Entries (ACEs)
-Why Are ACEs Important?
-ACL Attacks in the Wild
-ACL Enumeration
-Enumerating ACLs with PowerView
-Enumerating ACLs with BloodHound
-ACL Abuse Tactics
-Full Attack Chain Overview
-Step-by-Step Exploitation Commands
-Cleanup After the Attack
-Detection and Remediation of ACL Abuse
-DCSync Attack
-What is DCSync and How Does it Work?
-Verifying Replication Rights
-Extracting NTLM Hashes with secretsdump.py
-Checking for Reversible Encryption
-Performing DCSync with Mimikatz
-Privileged Access
-Overview of Lateral Movement Methods
-Remote Desktop (RDP) Access
-WinRM / PowerShell Remoting Access
-SQL Server Admin Access
-Kerberos Double Hop Problem
-Background and Explanation
-Workaround 1 — PSCredential Object
-Workaround 2 — Register PSSession Configuration
-Bleeding Edge Vulnerabilities
-NoPac — CVE-2021-42278 & CVE-2021-42287
-PrintNightmare — CVE-2021-34527
-PetitPotam — CVE-2021-36942
-Miscellaneous Misconfigurations
-Exchange Related Group Membership
-PrivExchange
-Printer Bug (MS-RPRN)
-MS14-068
-Sniffing LDAP Credentials
-Enumerating DNS Records with adidnsdump
-Password in Description Field
-PASSWD_NOTREQD Field
-Credentials in SMB Shares and SYSVOL Scripts
-Group Policy Preferences (GPP) Passwords
-ASREPRoasting
-Group Policy Object (GPO) Abuse
-Domain Trusts Primer
-Why Trusts Matter
-Domain Trusts Overview
-Enumerating Trust Relationships
-Attacking Domain Trusts — Child to Parent (Windows)
-SID History Primer
-ExtraSids Attack Overview
-ExtraSids Attack with Mimikatz
-ExtraSids Attack with Rubeus
-Attacking Domain Trusts — Child to Parent (Linux)
-DCSync with secretsdump.py
-Brute Forcing SIDs with lookupsid.py
-Golden Ticket with ticketer.py
-Automated Attack with raiseChild.py
-Attacking Domain Trusts — Cross-Forest (Windows)
-Cross-Forest Kerberoasting
-Admin Password Re-Use and Foreign Group Membership
-SID History Abuse Cross Forest
-Attacking Domain Trusts — Cross-Forest (Linux)
-Cross-Forest Kerberoasting with GetUserSPNs.py
-Hunting Foreign Group Membership with BloodHound-Python
 ---
 
 ## Introduction to Active Directory Enumeration & Attacks
