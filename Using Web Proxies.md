@@ -1,4 +1,5 @@
-![Uploading image.png…]()
+<img width="915" height="413" alt="image" src="https://github.com/user-attachments/assets/c70acda9-c97a-459d-8478-600b85aeeee4" />
+
 
 # Using Web Proxies — Structured Notes
 
